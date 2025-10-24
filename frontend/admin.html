@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang=en>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bingo Admin</title>
+</head>
+<body>
+  <h1>Admin Controls</h1>
+  <label>Game ID: <input id="gameId" value="demo" /></label>
+  <button id="start">Start Game</button>
+  <button id="draw">Draw Number</button>
+  <button id="stage2">Set Stage: 2 Rows</button>
+  <button id="stage3">Set Stage: 3 Rows</button>
+  <button id="stage4">Set Stage: 4 Rows</button>
+  <button id="stage5">Set Stage: Full Card</button>
+
+  <script>
+    const api = (path, opts={}) => fetch(`http://localhost:8000${path}`, {
+      headers: { "Content-Type": "application/json" },
+      ...opts
+    }).then(r => r.json());
+
+    const gameIdEl = document.getElementById('gameId');
+
+    document.getElementById('start').onclick = () =>
+      api(`/games/${gameIdEl.value}/start`, {
+        method: 'POST',
+        body: JSON.stringify({ mode: "progressive_rows", ball_set: 75, stage: 1 })
+      });
+
+    document.getElementById('draw').onclick = () =>
+      api(`/games/${gameIdEl.value}/draw`, { method: 'POST' });
+
+    document.getElementById('stage2').onclick = () =>
+      api(`/games/${gameIdEl.value}/stage/2`, { method: 'POST' });
+
+    document.getElementById('stage3').onclick = () =>
+      api(`/games/${gameIdEl.value}/stage/3`, { method: 'POST' });
+
+    document.getElementById('stage4').onclick = () =>
+      api(`/games/${gameIdEl.value}/stage/4`, { method: 'POST' });
+
+    document.getElementById('stage5').onclick = () =>
+      api(`/games/${gameIdEl.value}/stage/5`, { method: 'POST' });
+  </script>
+</body>
+</html>

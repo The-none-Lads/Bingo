@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang=en>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bingo Display</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <h1>Bingo</h1>
+
+  <div>
+    <label>Game ID: <input id="gameId" value="demo" /></label>
+    <button id="start">Start Game</button>
+    <button id="draw">Draw Number</button>
+    <span id="goal"></span>
+  </div>
+
+  <div id="drawn"></div>
+
+  <hr/>
+
+  <h2>Validate Serial</h2>
+  <input id="serial" placeholder="Paste serial here" />
+  <button id="check">Check Bingo</button>
+  <div id="verdict"></div>
+  <div id="card"></div>
+
+  <!-- Sounds -->
+  <audio id="winSound" src="win.mp3" preload="auto"></audio>
+  <audio id="failSound" src="fail.mp3" preload="auto"></audio>
+
+  <!-- Confetti canvas for celebration -->
+  <canvas id="confetti" class="confetti"></canvas>
+
+  <script src="app.js"></script>
+</body>
+</html>

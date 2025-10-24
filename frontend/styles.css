@@ -1,0 +1,15 @@
+body { font-family: system-ui, Arial; margin: 2rem; }
+#drawn { margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 8px; }
+.ball { width: 40px; height: 40px; border-radius: 20px; background: #eee; display:flex;justify-content:center;align-items:center; }
+.ball.new { background: gold; animation: pop 600ms ease; }
+@keyframes pop { 0%{transform:scale(0.7);} 100%{transform:scale(1);} }
+
+.grid { display: grid; grid-template-columns: repeat(5, 50px); gap: 6px; margin-top: 1rem; }
+.cell { width: 50px; height: 50px; display:flex; align-items:center; justify-content:center; border:1px solid #ccc; }
+.cell.marked { background: #7dd3fc; color: #0b3b57; font-weight: bold; }
+
+.verdict.win { font-size: 1.4rem; color: #16a34a; animation: pulse 1s ease infinite; }
+.verdict.fail { color: #ef4444; }
+@keyframes pulse { 0%{transform:scale(1);}50%{transform:scale(1.05);}100%{transform:scale(1);} }
+
+.confetti { position: fixed; inset:0; pointer-events:none; }
