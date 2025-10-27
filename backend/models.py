@@ -21,11 +21,9 @@ class CardBatchRequest(BaseModel):
     count: int = 50
     game_id: Optional[str] = None
 
-class CardResponse(BaseModel):
-    serial: str
-    grid: List[List[str | int]]
 
 class CardResponse(BaseModel):
+    exists: bool
     public_id: str
     serial: str
     grid: List[List[Union[str, int]]]
@@ -42,3 +40,4 @@ class ValidateResponse(BaseModel):
     details: dict
     drawn: List[int]
     grid: List[List[str | int]]
+    public_id: str

@@ -87,7 +87,7 @@ def generate_cards(req: CardBatchRequest):
     return {"count": len(cards), "cards": cards}
 
 
-@app.get("/cards/{public_id}")
+@app.get("/cards/{public_id}", response_model=CardResponse)
 def get_card(public_id: str):
     card = db.cards.get(public_id)
     if not card:
@@ -109,7 +109,7 @@ def get_card(public_id: str):
 # Validation endpoint
 # -------------------------
 
-@app.post("/validate")
+@app.post("/validate", response_model=ValidateResponse)
 def validate(req: ValidateRequest):
     game = db.games.get(req.game_id)
     if not game:
