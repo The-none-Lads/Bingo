@@ -41,3 +41,5 @@ class ValidateResponse(BaseModel):
     drawn: List[int]
     grid: List[List[str | int]]
     public_id: str
+    type: str | None = None   # optional, so REST still works
+

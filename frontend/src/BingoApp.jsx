@@ -17,26 +17,36 @@ const BingoApp = () => {
   const [customCount, setCustomCount] = useState(10);
   const [openCard, setOpenCard] = useState(null);
 
-  // Fetch game state periodically
-  useEffect(() => {
-    const interval = setInterval(fetchGameState, 2000);
-    return () => clearInterval(interval);
-  }, [gameId]);
+useEffect(() => {
+  const ws = new WebSocket(`ws://localhost:8000/ws/${gameId}`);
 
-  const fetchGameState = async () => {
+  ws.onopen = () => {
+    console.log("Connected to game", gameId);
+  };
+
+  ws.onmessage = (event) => {
     try {
-      const res = await fetch(`${API_BASE}/games/${gameId}/state`);
-      if (res.ok) {
-        const data = await res.json();
-        if (gameState && data.drawn.length > gameState.drawn.length) {
-          setLastDrawn(data.drawn[data.drawn.length - 1]);
-        }
-        setGameState(data);
+      const data = JSON.parse(event.data);
+      if (data.type === "state_update") {
+        setGameState(data.state);
+      }
+      if (data.type === "celebration") {
+        setCelebrating(true);
+        setTimeout(() => setCelebrating(false), 5000);
       }
     } catch (err) {
-      console.error('Failed to fetch game state:', err);
+      console.error("Bad WS message", err);
     }
   };
+
+  ws.onclose = () => {
+    console.log("Disconnected from game", gameId);
+  };
+
+  return () => ws.close();
+}, [gameId]);
+
+
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
@@ -172,7 +182,17 @@ const BingoApp = () => {
               <Settings className="w-6 h-6" />
             </button>
           </div>
-
+{/* Game selector */}
+<div className="mb-6 flex items-center space-x-2">
+  <label className="text-lg font-semibold">Game ID:</label>
+  <input
+    type="text"
+    value={gameId}
+    onChange={(e) => setGameId(e.target.value)}
+    className="px-3 py-2 rounded border text-white"
+    placeholder="Enter game ID"
+  />
+</div>
           {gameState && (
             <>
               <div className="mb-8 bg-white/10 backdrop-blur-lg rounded-2xl p-6">
