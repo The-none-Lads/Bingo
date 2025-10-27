@@ -590,7 +590,7 @@ const BingoApp = () => {
       </div>
 
       {/* Hidden print area */}
-      <div className="hidden print:block">
+      <div id="print-area" className="hidden print:block">
         <div className="grid grid-cols-2 gap-4">
           {generatedCards.map(card => (
             <div
