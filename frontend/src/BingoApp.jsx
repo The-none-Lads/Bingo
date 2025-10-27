@@ -1,37 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
+import { Play, Square, CheckCircle2, Settings, Printer, Grid3x3, Crown, X } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
 
 const BingoApp = () => {
-  const [view, setView] = useState('display');
+  const [view, setView] = useState('display'); // 'display' or 'admin'
   const [gameId, setGameId] = useState('demo');
   const [gameState, setGameState] = useState(null);
   const [lastDrawn, setLastDrawn] = useState(null);
   const [validationResult, setValidationResult] = useState(null);
   const [cardToValidate, setCardToValidate] = useState('');
   const [generatedCards, setGeneratedCards] = useState([]);
+  const [showSettings, setShowSettings] = useState(false);
   const [celebrating, setCelebrating] = useState(false);
   const confettiRef = useRef(null);
-  const [customCount, setCustomCount] = useState(10);
-  const [openCard, setOpenCard] = useState(null);
-  const wsRef = useRef(null);
 
   // WebSocket connection for real-time updates
   useEffect(() => {
-    console.log('🔌 Setting up WebSocket for game:', gameId);
-    
     const ws = new WebSocket(`ws://localhost:8000/ws/${gameId}`);
-    wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log('✅ WebSocket connected to game:', gameId);
+      console.log("Connected to game:", gameId);
     };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('📨 WebSocket message received:', data);
+        console.log("WebSocket message:", data);
         
         if (data.type === "state_update" && data.state) {
           const prevLength = gameState?.drawn?.length || 0;
@@ -39,89 +34,80 @@ const BingoApp = () => {
           
           // Update last drawn if new number was added
           if (newLength > prevLength && data.state.drawn.length > 0) {
-            const newNum = data.state.drawn[data.state.drawn.length - 1];
-            console.log('🎱 New number drawn:', newNum);
-            setLastDrawn(newNum);
-            setTimeout(() => setLastDrawn(null), 3000);
+            setLastDrawn(data.state.drawn[data.state.drawn.length - 1]);
+            setTimeout(() => setLastDrawn(null), 3000); // Clear highlight after 3s
           }
           
           setGameState(data.state);
         }
         
         if (data.type === "celebration") {
-          console.log('🎉 Celebration triggered!');
           setCelebrating(true);
           launchConfetti();
           setTimeout(() => setCelebrating(false), 5000);
         }
       } catch (err) {
-        console.error('❌ WebSocket message error:', err);
+        console.error("WebSocket message error:", err);
       }
     };
 
     ws.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
+      console.error("WebSocket error:", error);
     };
 
     ws.onclose = () => {
-      console.log('🔌 WebSocket disconnected from game:', gameId);
+      console.log("Disconnected from game:", gameId);
     };
 
     return () => {
-      console.log('🧹 Cleaning up WebSocket connection');
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      console.log("Closing WebSocket connection");
+      ws.close();
     };
   }, [gameId]);
 
+  const fetchGameState = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/games/${gameId}/state`);
+      if (res.ok) {
+        const data = await res.json();
+        if (gameState && data.drawn.length > gameState.drawn.length) {
+          setLastDrawn(data.drawn[data.drawn.length - 1]);
+        }
+        setGameState(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch game state:', err);
+    }
+  };
+
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
-      console.log('▶️ Starting game:', { gameId, mode, stage });
-      const response = await fetch(`${API_BASE}/games/${gameId}/start`, {
+      await fetch(`${API_BASE}/games/${gameId}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, ball_set: 75, stage })
       });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ Game started:', data);
-      }
+      fetchGameState();
     } catch (err) {
-      console.error('❌ Failed to start game:', err);
+      console.error('Failed to start game:', err);
     }
   };
 
   const drawNumber = async () => {
     try {
-      console.log('🎲 Drawing number for game:', gameId);
-      const response = await fetch(`${API_BASE}/games/${gameId}/draw`, { 
-        method: 'POST' 
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ Number drawn:', data);
-      }
+      await fetch(`${API_BASE}/games/${gameId}/draw`, { method: 'POST' });
+      fetchGameState();
     } catch (err) {
-      console.error('❌ Failed to draw number:', err);
+      console.error('Failed to draw number:', err);
     }
   };
 
   const setStage = async (stage) => {
     try {
-      console.log('📊 Setting stage to:', stage);
-      const response = await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { 
-        method: 'POST' 
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ Stage set:', data);
-      }
+      await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { method: 'POST' });
+      fetchGameState();
     } catch (err) {
-      console.error('❌ Failed to set stage:', err);
+      console.error('Failed to set stage:', err);
     }
   };
 
@@ -134,9 +120,8 @@ const BingoApp = () => {
       });
       const data = await res.json();
       setGeneratedCards(data.cards);
-      console.log(`✅ Generated ${data.cards.length} cards`);
     } catch (err) {
-      console.error('❌ Failed to generate cards:', err);
+      console.error('Failed to generate cards:', err);
     }
   };
 
@@ -152,26 +137,19 @@ const BingoApp = () => {
       const data = await res.json();
       setValidationResult(data);
       
-      console.log('🔍 Validation result:', data);
-      
       if (data.valid) {
-        console.log('🎉 BINGO! Valid card!');
         setCelebrating(true);
         launchConfetti();
         setTimeout(() => setCelebrating(false), 5000);
       }
     } catch (err) {
-      console.error('❌ Failed to validate card:', err);
+      console.error('Failed to validate card:', err);
     }
   };
 
   const launchConfetti = () => {
-    console.log('🎊 Launching confetti!');
     const canvas = confettiRef.current;
-    if (!canvas) {
-      console.error('❌ Confetti canvas not found');
-      return;
-    }
+    if (!canvas) return;
     
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
@@ -183,8 +161,7 @@ const BingoApp = () => {
       size: Math.random() * 8 + 4,
       color: `hsl(${Math.random() * 360}, 100%, 50%)`,
       speed: Math.random() * 4 + 2,
-      rotation: Math.random() * 360,
-      rotationSpeed: Math.random() * 6 - 3
+      rotation: Math.random() * 360
     }));
 
     let animationId;
@@ -199,22 +176,16 @@ const BingoApp = () => {
         ctx.restore();
         
         p.y += p.speed;
-        p.rotation += p.rotationSpeed;
-        if (p.y > canvas.height) {
-          p.y = -10;
-          p.x = Math.random() * canvas.width;
-        }
+        p.rotation += 3;
+        if (p.y > canvas.height) p.y = -10;
       });
       animationId = requestAnimationFrame(draw);
     };
     
     draw();
     setTimeout(() => {
-      if (animationId) {
-        cancelAnimationFrame(animationId);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        console.log('🛑 Confetti animation stopped');
-      }
+      cancelAnimationFrame(animationId);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
     }, 5000);
   };
 
@@ -243,17 +214,6 @@ const BingoApp = () => {
             >
               <Settings className="w-6 h-6" />
             </button>
-          </div>
-
-          <div className="mb-6 flex items-center space-x-2">
-            <label className="text-lg font-semibold">Game ID:</label>
-            <input
-              type="text"
-              value={gameId}
-              onChange={(e) => setGameId(e.target.value)}
-              className="px-3 py-2 rounded border bg-white/10 text-white backdrop-blur"
-              placeholder="Enter game ID"
-            />
           </div>
 
           {gameState && (
@@ -304,12 +264,10 @@ const BingoApp = () => {
 
           {celebrating && (
             <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-40">
-              <div className="text-center">
-                <div className="animate-bounce">
-                  <Crown className="w-32 h-32 mx-auto mb-6 text-yellow-300" />
-                </div>
-                <h2 className="text-9xl font-bold text-yellow-300 mb-4 animate-pulse">BINGO!</h2>
-                <p className="text-3xl animate-pulse">We have a winner!</p>
+              <div className="text-center animate-bounce">
+                <Crown className="w-32 h-32 mx-auto mb-6 text-yellow-300" />
+                <h2 className="text-9xl font-bold text-yellow-300 mb-4">BINGO!</h2>
+                <p className="text-3xl">We have a winner!</p>
               </div>
             </div>
           )}
@@ -436,23 +394,6 @@ const BingoApp = () => {
                   100 Cards
                 </button>
               </div>
-              
-              <div className="flex space-x-2">
-                <input
-                  type="number"
-                  value={customCount}
-                  onChange={e => setCustomCount(parseInt(e.target.value) || 1)}
-                  min={1}
-                  max={200}
-                  className="border p-2 rounded w-24"
-                />
-                <button
-                  onClick={() => generateCards(customCount)}
-                  className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
-                >
-                  Generate Custom
-                </button>
-              </div>
 
               {generatedCards.length > 0 && (
                 <div className="border rounded-lg p-4 max-h-96 overflow-y-auto">
@@ -465,35 +406,10 @@ const BingoApp = () => {
                       Print All
                     </button>
                   </div>
-
-                  <div className="space-y-2">
-                    {generatedCards.map(card => (
-                      <div key={card.public_id} className="border rounded shadow">
-                        <div
-                          className="cursor-pointer bg-gray-100 p-2 font-bold hover:bg-gray-200"
-                          onClick={() => setOpenCard(openCard === card.public_id ? null : card.public_id)}
-                        >
-                          Card ID: {card.public_id}
-                        </div>
-                        {openCard === card.public_id && (
-                          <div className="p-4">
-                            <div className="grid grid-cols-5 gap-1">
-                              {["B","I","N","G","O"].map(letter => (
-                                <div key={letter} className="bg-indigo-600 text-white text-center font-bold p-1">
-                                  {letter}
-                                </div>
-                              ))}
-                              {card.grid.flat().map((cell, i) => (
-                                <div
-                                  key={i}
-                                  className={`border text-center p-2 ${cell === "FREE" ? "bg-yellow-200 font-bold" : ""}`}
-                                >
-                                  {cell}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                  <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                    {generatedCards.map((card, idx) => (
+                      <div key={idx} className="p-2 bg-gray-50 rounded border">
+                        {card.public_id}
                       </div>
                     ))}
                   </div>
@@ -572,7 +488,7 @@ const BingoApp = () => {
                   <div className="text-sm text-gray-600">Numbers Drawn</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xl font-bold text-blue-600">{getModeName(gameState.mode)}</div>
+                  <div className="text-3xl font-bold text-blue-600">{getModeName(gameState.mode)}</div>
                   <div className="text-sm text-gray-600">Game Mode</div>
                 </div>
                 <div className="text-center">
@@ -586,42 +502,6 @@ const BingoApp = () => {
               </div>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Hidden print area */}
-      <div className="hidden print:block">
-        <div className="grid grid-cols-2 gap-4">
-          {generatedCards.map(card => (
-            <div
-              key={card.public_id}
-              className="border p-4 shadow break-inside-avoid"
-            >
-              <div className="font-bold text-center mb-2">
-                Card ID: {card.public_id}
-              </div>
-              <div className="grid grid-cols-5 gap-1">
-                {["B","I","N","G","O"].map(letter => (
-                  <div
-                    key={letter}
-                    className="bg-indigo-600 text-white text-center font-bold p-1"
-                  >
-                    {letter}
-                  </div>
-                ))}
-                {card.grid.flat().map((cell, i) => (
-                  <div
-                    key={i}
-                    className={`border text-center p-2 aspect-square flex items-center justify-center ${
-                      cell === "FREE" ? "bg-yellow-200 font-bold" : ""
-                    }`}
-                  >
-                    {cell}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
         </div>
       </div>
     </div>
