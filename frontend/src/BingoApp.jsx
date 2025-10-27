@@ -94,7 +94,6 @@ const BingoApp = () => {
       });
       const data = await res.json();
       setValidationResult(data);
-      
       if (data.valid) {
         setCelebrating(true);
         launchConfetti();

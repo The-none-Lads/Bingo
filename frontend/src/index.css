@@ -8,20 +8,13 @@
     visibility: visible;
   }
   #print-area {
-    display: grid !important;
-    grid-template-columns: repeat(2, 1fr); /* 2 across */
-    gap: 0.5cm;
+    display: block !important;
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     background: white;
-    padding: 0.5cm;
-  }
-  #print-area > div {
-    width: 9.5cm;   /* ~half of A4 width minus margins */
-    height: 9.5cm;  /* force square cards */
-    page-break-inside: avoid;
+    padding: 1rem;
   }
   .page-break-inside-avoid {
     page-break-inside: avoid;
