@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from logic.draws import DrawEngine
 from logic.cards import generate_75_ball_card, serialize_card, short_id
 from logic.validate import validate_card
@@ -13,6 +14,15 @@ from models import (
 )
 
 app = FastAPI()
+
+# CORS Configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or restrict to ["http://localhost:5173"] for your Vite dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # -------------------------
@@ -87,7 +97,7 @@ def generate_cards(req: CardBatchRequest):
     return {"count": len(cards), "cards": cards}
 
 
-@app.get("/cards/{public_id}", response_model=CardResponse)
+@app.get("/cards/{public_id}")
 def get_card(public_id: str):
     card = db.cards.get(public_id)
     if not card:
@@ -109,7 +119,7 @@ def get_card(public_id: str):
 # Validation endpoint
 # -------------------------
 
-@app.post("/validate", response_model=ValidateResponse)
+@app.post("/validate")
 def validate(req: ValidateRequest):
     game = db.games.get(req.game_id)
     if not game:
