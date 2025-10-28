@@ -104,7 +104,7 @@ jobs:
     - name: Run integration tests
       run: |
         cd backend
-        pytest tests/test_integration.py -v
+        pytest backend/integration_tests/ -v
     
     - name: Stop backend server
       if: always()
