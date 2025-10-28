@@ -24,7 +24,9 @@ class TestGameEndpoints:
     """Test game management endpoints."""
 
     def test_start_game(self, client):
-        """Test starting a new game."""
+        """
+        Test starting a new game returns the expected message and config.
+        """
         response = client.post(
             "/games/test_game/start",
             json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
@@ -32,14 +34,18 @@ class TestGameEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
-        assert len(data["cards"]) == 1
 
-        card = data["cards"][0]
-        assert "public_id" in card
-        assert "serial" in card
-        assert "grid" in card
-        assert len(card["grid"]) == 5
+        # The API should return a message and a config object
+        assert "message" in data
+        assert data["message"] == "Game test_game started"
+
+        assert "config" in data
+        config = data["config"]
+
+        # Verify config matches what we sent (or defaults if omitted)
+        assert config["mode"] == "progressive_rows"
+        assert config["ball_set"] == 75
+        assert config["stage"] == 1
 
     def test_generate_multiple_cards(self, client):
         """Test generating multiple cards."""
@@ -57,12 +63,14 @@ class TestGameEndpoints:
         assert len(set(ids)) == 50
 
     def test_generate_cards_default_count(self, client):
-        """Test generating cards with default count."""
-        response = client.post("/cards/batch", json={})
-
+        response = client.post(
+            "/cards/batch",
+            json={"count": 50, "game_id": "test_game"}  # must provide explicitly now
+        )
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 50  # Default
+        assert data["count"] == 50
+
 
     def test_get_card_by_id(self, client):
         """Test retrieving a card by public ID."""
@@ -352,147 +360,132 @@ class TestErrorHandling:
         assert response.status_code == 422
 
 
-def test_missing_required_fields(self, client):
-    """Test missing required fields in request."""
-    response = client.post(
-        "/cards/batch", json={}  # Missing count and game_id (but they have defaults)
-    )
-    # Should succeed with defaults
-    assert response.status_code == 200
-    data = response.json()
-    assert "message" in data
-    assert data["config"]["mode"] == "progressive_rows"
-    assert data["config"]["ball_set"] == 75
+class TestDrawEndpoints:
+    def test_missing_required_fields(self, client):
+        response = client.post("/cards/batch", json={})
+        assert response.status_code == 422
 
 
-def test_start_game_different_modes(self, client):
-    """Test starting games with different modes."""
-    modes = ["progressive_rows", "full_house", "four_corners", "diagonals"]
+    def test_start_game_different_modes(self, client):
+        """Test starting games with different modes."""
+        modes = ["progressive_rows", "full_house", "four_corners", "diagonals"]
 
-    for mode in modes:
-        response = client.post(
-            f"/games/game_{mode}/start", json={"mode": mode, "ball_set": 75, "stage": 1}
-        )
-        assert response.status_code == 200
-        assert response.json()["config"]["mode"] == mode
+        for mode in modes:
+            response = client.post(
+                f"/games/game_{mode}/start",
+                json={"mode": mode, "ball_set": 75, "stage": 1},
+            )
+            assert response.status_code == 200
+            assert response.json()["config"]["mode"] == mode
 
-
-def test_draw_number(self, client):
-    """Test drawing a number."""
-    # Start game first
-    client.post(
-        "/games/test_game/start",
-        json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
-    )
-
-    # Draw number
-    response = client.post("/games/test_game/draw")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert "drawn_number" in data
-    assert "all_drawn" in data
-    assert 1 <= data["drawn_number"] <= 75
-    assert len(data["all_drawn"]) == 1
-
-
-def test_draw_multiple_numbers(self, client):
-    """Test drawing multiple numbers."""
-    client.post(
-        "/games/test_game/start",
-        json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
-    )
-
-    drawn_numbers = []
-    for _ in range(10):
-        response = client.post("/games/test_game/draw")
-        assert response.status_code == 200
-        drawn_numbers.append(response.json()["drawn_number"])
-
-    # All should be unique
-    assert len(set(drawn_numbers)) == 10
-
-
-def test_draw_number_game_not_found(self, client):
-    """Test drawing from non-existent game."""
-    response = client.post("/games/nonexistent/draw")
-    assert response.status_code == 404
-
-
-def test_draw_all_numbers_exhaustion(self, client):
-    """Test that drawing all numbers eventually returns error."""
-    client.post(
-        "/games/test_game/start",
-        json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
-    )
-
-    # Draw all 75 numbers
-    for _ in range(75):
-        response = client.post("/games/test_game/draw")
-        assert response.status_code == 200
-
-    # 76th draw should fail
-    response = client.post("/games/test_game/draw")
-    assert response.status_code == 400
-    assert "No numbers left" in response.json()["detail"]
-
-
-def test_get_game_state(self, client):
-    """Test getting game state."""
-    client.post(
-        "/games/test_game/start",
-        json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
-    )
-
-    response = client.get("/games/test_game/state")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["game_id"] == "test_game"
-    assert data["mode"] == "progressive_rows"
-    assert data["stage"] == 1
-    assert data["status"] == "active"
-    assert isinstance(data["drawn"], list)
-
-
-def test_get_game_state_not_found(self, client):
-    """Test getting state of non-existent game."""
-    response = client.get("/games/nonexistent/state")
-    assert response.status_code == 404
-
-
-def test_set_stage(self, client):
-    """Test changing game stage."""
-    client.post(
-        "/games/test_game/start",
-        json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
-    )
-
-    response = client.post("/games/test_game/stage/3")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["game_id"] == "test_game"
-    assert data["stage"] == 3
-
-    # Verify in game state
-    state = client.get("/games/test_game/state").json()
-    assert state["stage"] == 3
-
-
-def test_set_stage_game_not_found(self, client):
-    """Test setting stage for non-existent game."""
-    response = client.post("/games/nonexistent/stage/2")
-    assert response.status_code == 404
-
-
-class TestCardEndpoints:
-    """Test card generation and retrieval endpoints."""
-
-    def test_generate_single_card(self, client):
-        """Test generating a single card."""
-        response = client.post(
-            "/cards/batch", json={"count": 1, "game_id": "test_game"}
+    def test_draw_number(self, client):
+        """Test drawing a number."""
+        # Start game first
+        client.post(
+            "/games/test_game/start",
+            json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
         )
 
+        # Draw number
+        response = client.post("/games/test_game/draw")
+
         assert response.status_code == 200
+        data = response.json()
+        assert "drawn_number" in data
+        assert "all_drawn" in data
+        assert 1 <= data["drawn_number"] <= 75
+        assert len(data["all_drawn"]) == 1
+
+    def test_draw_multiple_numbers(self, client):
+        """Test drawing multiple numbers."""
+        client.post(
+            "/games/test_game/start",
+            json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
+        )
+
+        drawn_numbers = []
+        for _ in range(10):
+            response = client.post("/games/test_game/draw")
+            assert response.status_code == 200
+            drawn_numbers.append(response.json()["drawn_number"])
+
+        # All should be unique
+        assert len(set(drawn_numbers)) == 10
+
+    def test_draw_number_game_not_found(self, client):
+        """Test drawing from non-existent game."""
+        response = client.post("/games/nonexistent/draw")
+        assert response.status_code == 404
+
+    def test_draw_all_numbers_exhaustion(self, client):
+        """Test that drawing all numbers eventually returns error."""
+        client.post(
+            "/games/test_game/start",
+            json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
+        )
+
+        # Draw all 75 numbers
+        for _ in range(75):
+            response = client.post("/games/test_game/draw")
+            assert response.status_code == 200
+
+        # 76th draw should fail
+        response = client.post("/games/test_game/draw")
+        assert response.status_code == 400
+        assert "No numbers left" in response.json()["detail"]
+
+    def test_get_game_state(self, client):
+        """Test getting game state."""
+        client.post(
+            "/games/test_game/start",
+            json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
+        )
+
+        response = client.get("/games/test_game/state")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["game_id"] == "test_game"
+        assert data["mode"] == "progressive_rows"
+        assert data["stage"] == 1
+        assert data["status"] == "active"
+        assert isinstance(data["drawn"], list)
+
+    def test_get_game_state_not_found(self, client):
+        """Test getting state of non-existent game."""
+        response = client.get("/games/nonexistent/state")
+        assert response.status_code == 404
+
+    def test_set_stage(self, client):
+        """Test changing game stage."""
+        client.post(
+            "/games/test_game/start",
+            json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
+        )
+
+        response = client.post("/games/test_game/stage/3")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["game_id"] == "test_game"
+        assert data["stage"] == 3
+
+        # Verify in game state
+        state = client.get("/games/test_game/state").json()
+        assert state["stage"] == 3
+
+    def test_set_stage_game_not_found(self, client):
+        """Test setting stage for non-existent game."""
+        response = client.post("/games/nonexistent/stage/2")
+        assert response.status_code == 404
+
+    class TestCardEndpoints:
+        """Test card generation and retrieval endpoints."""
+
+        def test_generate_single_card(self, client):
+            """Test generating a single card."""
+            response = client.post(
+                "/cards/batch", json={"count": 1, "game_id": "test_game"}
+            )
+
+            assert response.status_code == 200

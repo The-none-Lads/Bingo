@@ -6,11 +6,9 @@ from pydantic import BaseModel
 
 
 class CreateGameRequest(BaseModel):
-    mode: str = (
-        "progressive_rows"  # progressive_rows | full_house | four_corners | diagonals
-    )
-    ball_set: int = 75  # 75-ball or 90-ball
-    stage: int = 1  # required rows if progressive
+    mode: str
+    ball_set: int
+    stage: int
 
 
 class GameStateResponse(BaseModel):
@@ -25,8 +23,8 @@ class GameStateResponse(BaseModel):
 
 
 class CardBatchRequest(BaseModel):
-    count: int = 50
-    game_id: Optional[str] = None
+    count: int
+    game_id: Optional[str]
 
 
 class CardResponse(BaseModel):

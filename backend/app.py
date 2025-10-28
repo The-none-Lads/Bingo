@@ -101,7 +101,7 @@ async def start_game(game_id: str, req: CreateGameRequest):
     }
     # broadcast new state
     await broadcast_game_state(game_id)
-    return {"message": f"Game {game_id} started", "config": req.dict()}
+    return {"message": f"Game {game_id} started", "config": req.model_dump()}
 
 
 @app.post("/games/{game_id}/stage/{required_rows}")
