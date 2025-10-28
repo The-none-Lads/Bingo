@@ -4,11 +4,12 @@ import uuid
 
 import httpx
 import pytest
+import pytest_asyncio
 from app import app
 from httpx import AsyncClient
 
 
-@pytest.fixture(params=["inprocess", "live"])
+@pytest_asyncio.fixture(params=["inprocess", "live"])
 async def client(request):
     """
     Provides an httpx.AsyncClient either in-process (fast) or
