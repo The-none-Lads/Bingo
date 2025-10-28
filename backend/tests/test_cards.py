@@ -114,8 +114,10 @@ class TestCardSerialization:
 
         assert isinstance(short, str)
         assert len(short) == 8
-        assert short.isupper()
         assert short.isalnum()
+        # If there are letters, they must be uppercase
+        if any(c.isalpha() for c in short):
+            assert short.isupper()
 
     def test_short_id_deterministic(self):
         """Test that same card always generates same ID."""
