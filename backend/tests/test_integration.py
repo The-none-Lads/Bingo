@@ -1,10 +1,11 @@
-import uuid
-import pytest
 import subprocess
 import time
+import uuid
+
 import httpx
-from httpx import AsyncClient
+import pytest
 from app import app
+from httpx import AsyncClient
 
 
 @pytest.fixture(params=["inprocess", "live"])
