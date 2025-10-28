@@ -103,7 +103,8 @@ jobs:
     
     - name: Run integration tests
       run: |
-        python test_api-enpoints.py
+        cd backend
+        pytest tests/test_integration.py -v
     
     - name: Stop backend server
       if: always()
