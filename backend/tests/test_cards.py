@@ -1,8 +1,8 @@
 import pytest
 from logic.cards import (
+    deserialize_card,
     generate_75_ball_card,
     serialize_card,
-    deserialize_card,
     short_id,
 )
 

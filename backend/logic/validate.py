@@ -1,4 +1,5 @@
-from typing import Dict, Any, Tuple
+from typing import Any, Dict, Tuple
+
 from .modes import is_win
 
 

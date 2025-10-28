@@ -1,5 +1,5 @@
 import pytest
-from logic.modes import rows_completed, four_corners, diagonals, full_house, is_win
+from logic.modes import diagonals, four_corners, full_house, is_win, rows_completed
 
 
 @pytest.fixture
