@@ -1,6 +1,7 @@
 from typing import Dict, Any, Tuple
 from .modes import is_win
 
+
 def validate_card(game: Dict[str, Any], card: Dict[str, Any]) -> Tuple[bool, Dict]:
     mode = game["mode"]
     stage = game["stage"]
