@@ -65,12 +65,11 @@ class TestGameEndpoints:
     def test_generate_cards_default_count(self, client):
         response = client.post(
             "/cards/batch",
-            json={"count": 50, "game_id": "test_game"}  # must provide explicitly now
+            json={"count": 50, "game_id": "test_game"},  # must provide explicitly now
         )
         assert response.status_code == 200
         data = response.json()
         assert data["count"] == 50
-
 
     def test_get_card_by_id(self, client):
         """Test retrieving a card by public ID."""
@@ -364,7 +363,6 @@ class TestDrawEndpoints:
     def test_missing_required_fields(self, client):
         response = client.post("/cards/batch", json={})
         assert response.status_code == 422
-
 
     def test_start_game_different_modes(self, client):
         """Test starting games with different modes."""
