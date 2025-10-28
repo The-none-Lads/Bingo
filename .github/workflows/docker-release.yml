@@ -1,4 +1,4 @@
-name: Build and Publish Docker Image
+name: Build and Publish Private Docker Image
 
 on:
   push:
@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # needed to push to GHCR
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
