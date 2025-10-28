@@ -16,7 +16,9 @@ async def client(request):
     against a live uvicorn server (realistic).
     """
     if request.param == "inprocess":
-        async with AsyncClient(app=app, base_url="http://test") as ac:
+        # Use ASGITransport for in-process testing with FastAPI
+        transport = httpx.ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
     else:
         # Start uvicorn in a subprocess
