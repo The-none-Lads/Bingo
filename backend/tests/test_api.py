@@ -365,20 +365,20 @@ class TestErrorHandling:
         # Should fail validation
         assert response.status_code == 422
     
-    def test_missing_required_fields(self, client):
-        """Test missing required fields in request."""
-        response = client.post(
-            "/cards/batch",
-            json={}  # Missing count and game_id (but they have defaults)
-        )
-        # Should succeed with defaults
-        assert response.status_code == 200
-data = response.json()
-        assert "message" in data
-        assert data["config"]["mode"] == "progressive_rows"
-        assert data["config"]["ball_set"] == 75
-    
-    def test_start_game_different_modes(self, client):
+def test_missing_required_fields(self, client):
+    """Test missing required fields in request."""
+    response = client.post(
+        "/cards/batch",
+        json={}  # Missing count and game_id (but they have defaults)
+    )
+    # Should succeed with defaults
+    assert response.status_code == 200
+    data = response.json()
+    assert "message" in data
+    assert data["config"]["mode"] == "progressive_rows"
+    assert data["config"]["ball_set"] == 75
+
+def test_start_game_different_modes(self, client):
         """Test starting games with different modes."""
         modes = ["progressive_rows", "full_house", "four_corners", "diagonals"]
         
@@ -390,7 +390,7 @@ data = response.json()
             assert response.status_code == 200
             assert response.json()["config"]["mode"] == mode
     
-    def test_draw_number(self, client):
+def test_draw_number(self, client):
         """Test drawing a number."""
         # Start game first
         client.post(
@@ -408,7 +408,7 @@ data = response.json()
         assert 1 <= data["drawn_number"] <= 75
         assert len(data["all_drawn"]) == 1
     
-    def test_draw_multiple_numbers(self, client):
+def test_draw_multiple_numbers(self, client):
         """Test drawing multiple numbers."""
         client.post(
             "/games/test_game/start",
@@ -424,12 +424,12 @@ data = response.json()
         # All should be unique
         assert len(set(drawn_numbers)) == 10
     
-    def test_draw_number_game_not_found(self, client):
+def test_draw_number_game_not_found(self, client):
         """Test drawing from non-existent game."""
         response = client.post("/games/nonexistent/draw")
         assert response.status_code == 404
     
-    def test_draw_all_numbers_exhaustion(self, client):
+def test_draw_all_numbers_exhaustion(self, client):
         """Test that drawing all numbers eventually returns error."""
         client.post(
             "/games/test_game/start",
@@ -446,7 +446,7 @@ data = response.json()
         assert response.status_code == 400
         assert "No numbers left" in response.json()["detail"]
     
-    def test_get_game_state(self, client):
+def test_get_game_state(self, client):
         """Test getting game state."""
         client.post(
             "/games/test_game/start",
@@ -463,12 +463,12 @@ data = response.json()
         assert data["status"] == "active"
         assert isinstance(data["drawn"], list)
     
-    def test_get_game_state_not_found(self, client):
+def test_get_game_state_not_found(self, client):
         """Test getting state of non-existent game."""
         response = client.get("/games/nonexistent/state")
         assert response.status_code == 404
     
-    def test_set_stage(self, client):
+def test_set_stage(self, client):
         """Test changing game stage."""
         client.post(
             "/games/test_game/start",
@@ -486,7 +486,7 @@ data = response.json()
         state = client.get("/games/test_game/state").json()
         assert state["stage"] == 3
     
-    def test_set_stage_game_not_found(self, client):
+def test_set_stage_game_not_found(self, client):
         """Test setting stage for non-existent game."""
         response = client.post("/games/nonexistent/stage/2")
         assert response.status_code == 404
