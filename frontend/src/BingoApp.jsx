@@ -24,16 +24,22 @@ const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
     xlarge: 'w-48 h-48 text-6xl'
   };
   const letterSizeClasses = {
-    small: 'text-xs',
-    medium: 'text-sm',
-    large: 'text-lg',
-    xlarge: 'text-2xl',
+    small: 'text-base',
+    medium: 'text-xl',
+    large: 'text-3xl',
+    xlarge: 'text-5xl',
   };
   return (
     <div
       className={`${sizeClasses[size]} ${color} rounded-full flex flex-col items-center justify-center text-white font-bold shadow-2xl border-4 border-white/30 ${isAnimating ? 'animate-bounce' : ''}`}
     >
-      <div className={`${letterSizeClasses[size]} opacity-80`}>{letter}</div>
+      {/* Letter with serif font so "I" has horizontal bars */}
+      <div
+        className={`${letterSizeClasses[size]} opacity-90 font-serif`}
+        style={{ fontFamily: '"Georgia", "Times New Roman", serif' }}
+      >
+        {letter}
+      </div>
       <div>{number}</div>
     </div>
   );
