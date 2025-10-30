@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
 
 # Copy built frontend into backend's static folder
-COPY --from=frontend-build /app/frontend/build ./static
+COPY --from=frontend-build /app/frontend/dist ./static
 
 # Expose FastAPI port
 EXPOSE 8000
