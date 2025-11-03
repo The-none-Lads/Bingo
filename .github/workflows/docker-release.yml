@@ -1,4 +1,4 @@
-name: Build and Publish Private Docker Image
+name: Build and Publish Backend + Frontend Images
 
 on:
   push:
@@ -22,12 +22,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set lowercase image name
+      - name: Set lowercase image names
         run: |
-          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}/bingo-app:${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          echo "BACKEND_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-backend:${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          echo "FRONTEND_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-frontend:${GITHUB_REF_NAME}" >> $GITHUB_ENV
 
-      - name: Build Docker image
-        run: docker build -t $IMAGE_NAME .
+      - name: Build backend Docker image
+        run: docker build -f backend/Dockerfile -t $BACKEND_IMAGE .
 
-      - name: Push Docker image
-        run: docker push $IMAGE_NAME
+      - name: Push backend Docker image
+        run: docker push $BACKEND_IMAGE
+
+      - name: Build frontend Docker image
+        run: docker build -f frontend/Dockerfile -t $FRONTEND_IMAGE .
+
+      - name: Push frontend Docker image
+        run: docker push $FRONTEND_IMAGE
