@@ -49,7 +49,7 @@ This application provides a complete Bingo game experience with:
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/The-none-Lads/Bingo.git
    cd bingo
    ```
 
@@ -142,14 +142,14 @@ git push origin v1.0.0
 
 ```bash
 # Build backend
-docker build -f backend/Dockerfile -t ghcr.io/<your-org>/bingo-backend:latest .
+docker build -f backend/Dockerfile -t ghcr.io/the-none-lads/bingo-backend:latest .
 
 # Build frontend
-docker build -f frontend/Dockerfile -t ghcr.io/<your-org>/bingo-frontend:latest .
+docker build -f frontend/Dockerfile -t ghcr.io/the-none-lads/bingo-frontend:latest .
 
 # Push images
-docker push ghcr.io/<your-org>/bingo-backend:latest
-docker push ghcr.io/<your-org>/bingo-frontend:latest
+docker push ghcr.io/the-none-lads/bingo-backend:latest
+docker push ghcr.io/the-none-lads/bingo-frontend:latest
 ```
 
 ### Kubernetes Deployment
