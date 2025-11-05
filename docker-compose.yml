@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  backend:
+    image: ghcr.io/the-none-lads/bingo-backend:latest
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/the-none-lads/bingo-frontend:latest
+    ports:
+      - "3000:80"
+    restart: unless-stopped
