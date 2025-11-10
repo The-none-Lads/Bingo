@@ -156,6 +156,85 @@ docker push ghcr.io/the-none-lads/bingo-frontend:latest
 
 1. **Update image references** in `kubernetes/*.yaml` files to match your registry
 
+### Configuring Private Image Access
+
+Since the Docker images are hosted privately on GitHub Container Registry (GHCR), you need to configure Kubernetes with authentication credentials before deploying.
+
+#### Step 1: Create a GitHub Personal Access Token
+
+1. Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. Click "Generate new token (classic)"
+3. Give it a descriptive name (e.g., "Kubernetes GHCR Pull Token")
+4. Select the `read:packages` scope
+5. Generate the token and save it securely
+
+#### Step 2: Create Kubernetes Secret
+
+Create a Docker registry secret in your Kubernetes cluster with your GitHub credentials:
+
+```bash
+kubectl create secret docker-registry ghcr-secret \
+  --docker-server=ghcr.io \
+  --docker-username=YOUR_GITHUB_USERNAME \
+  --docker-password=YOUR_GITHUB_PAT \
+  --docker-email=YOUR_EMAIL@example.com
+```
+
+Replace:
+- `YOUR_GITHUB_USERNAME` with your GitHub username
+- `YOUR_GITHUB_PAT` with the Personal Access Token you created
+- `YOUR_EMAIL@example.com` with your email address
+
+**Note**: If you're deploying to a specific namespace, add the `-n NAMESPACE` flag to the command.
+
+#### Step 3: Update Deployment Files
+
+The deployment files have already been configured to use the `ghcr-secret`. Each deployment includes:
+
+```yaml
+spec:
+  template:
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+```
+
+This tells Kubernetes to use the secret when pulling images from GHCR.
+
+#### Step 4: Verify Secret Creation
+
+Confirm the secret was created successfully:
+
+```bash
+kubectl get secrets
+kubectl describe secret ghcr-secret
+```
+
+#### Alternative: Declarative Secret Creation
+
+For GitOps workflows or version control, you can create the secret declaratively:
+
+```bash
+# Generate base64 encoded Docker config
+kubectl create secret docker-registry ghcr-secret \
+  --docker-server=ghcr.io \
+  --docker-username=YOUR_GITHUB_USERNAME \
+  --docker-password=YOUR_GITHUB_PAT \
+  --docker-email=YOUR_EMAIL@example.com \
+  --dry-run=client -o yaml > kubernetes/ghcr-secret.yaml
+```
+
+**Security Warning**: The generated `ghcr-secret.yaml` file contains your credentials in base64 encoding (which is NOT encryption). Never commit this file to version control. Add it to `.gitignore`:
+
+```bash
+echo "kubernetes/ghcr-secret.yaml" >> .gitignore
+```
+
+For production environments, consider using:
+- **Sealed Secrets** - Encrypt secrets for safe storage in Git
+- **External Secrets Operator** - Sync secrets from external secret managers (AWS Secrets Manager, HashiCorp Vault, etc.)
+- **Kubernetes service accounts** with GHCR authentication if using GitHub-hosted runners
+
 2. **Apply Kubernetes manifests**
    ```bash
    # Deploy backend
