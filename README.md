@@ -236,6 +236,7 @@ docker push ghcr.io/the-none-lads/bingo-frontend:latest
     - **External Secrets Operator** - Sync secrets from external secret managers (AWS Secrets Manager, HashiCorp Vault, etc.)
     - **Kubernetes service accounts** with GHCR authentication if using GitHub-hosted runners
     </details>
+    
 2. **Apply Kubernetes manifests**
    ```bash
    # Deploy backend
