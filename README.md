@@ -156,7 +156,7 @@ docker push ghcr.io/the-none-lads/bingo-frontend:latest
 
 1. **Update image references** in `kubernetes/*.yaml` files to match your registry
 
- 1.1 *Make sure that kubernetes can access the private ghcr.io repository*
+1.1 *Make sure that kubernetes can access the private ghcr.io repository*
     <details><summary><strong>Configuring Private Image Access</strong></summary>
 
     Since the Docker images are hosted privately on GitHub Container Registry (GHCR), you need to configure Kubernetes with authentication credentials before deploying.
@@ -236,7 +236,7 @@ docker push ghcr.io/the-none-lads/bingo-frontend:latest
     - **External Secrets Operator** - Sync secrets from external secret managers (AWS Secrets Manager, HashiCorp Vault, etc.)
     - **Kubernetes service accounts** with GHCR authentication if using GitHub-hosted runners
     </details>
-    
+
 2. **Apply Kubernetes manifests**
    ```bash
    # Deploy backend
