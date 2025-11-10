@@ -155,6 +155,7 @@ docker push ghcr.io/the-none-lads/bingo-frontend:latest
 ### Kubernetes Deployment
 
 1. **Update image references** in `kubernetes/*.yaml` files to match your registry
+
  1.1 *Make sure that kubernetes can access the private ghcr.io repository*
     <details><summary><strong>Configuring Private Image Access</strong></summary>
 
