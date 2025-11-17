@@ -36,7 +36,6 @@ jobs:
           pip install -r backend/requirements-dev.txt
 
       - name: Lint with flake8
-        continue-on-error: true
         run: |
           # Stop the build if there are Python syntax errors or undefined names
           flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=node_modules,frontend/node_modules
@@ -44,17 +43,14 @@ jobs:
           flake8 backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=node_modules,frontend/node_modules
 
       - name: Check formatting with black
-        continue-on-error: true
         run: |
           black --check backend/ . --exclude=node_modules,frontend/node_modules
 
       - name: Sort imports with isort
-        continue-on-error: true
         run: |
           isort --check-only backend/ . --skip=node_modules --skip=frontend/node_modules
 
       - name: Type check with mypy
-        continue-on-error: true
         run: |
           mypy backend --ignore-missing-imports || true
 
@@ -69,49 +65,37 @@ jobs:
           npm install
 
       - name: Lint frontend with ESLint
-        continue-on-error: true
         run: |
           cd frontend
           npx eslint . --ext .js,.jsx,.ts,.tsx 
 
       - name: Lint styles with Stylelint
-        continue-on-error: true
         run: |
           cd frontend
           npx stylelint "**/*.{css,scss}"
 
       - name: Lint markdown with markdownlint
-        continue-on-error: true
         run: |
           npx markdownlint "**/*.md"
 
       - name: Lint YAML with yamllint
-        continue-on-error: true
         run: |
           pip install yamllint
           yamllint .
 
       - name: Lint JSON with jq
-        continue-on-error: true
         run: |
           find . -name '*.json' -not -path '*/node_modules/*' -exec jq empty {} \;
 
       - name: Lint HTML with htmlhint
-        continue-on-error: true
         run: |
           cd frontend
           npx htmlhint "**/*.html"
 
       - name: Lint Dockerfiles with hadolint
-        continue-on-error: true
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: ./Dockerfile
-      - name: Fail if any linting failed
-        if: failure()
-        run: |
-          echo "Linting errors detected"
-          exit 1
 
       - name: Run tests with pytest
         run: |
