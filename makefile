@@ -42,8 +42,8 @@ lint:
 	mypy backend --ignore-missing-imports || true
 
 format:
-	black backend/
-	isort backend/
+	black .
+	isort .
 
 format-check:
 	black --check backend/
