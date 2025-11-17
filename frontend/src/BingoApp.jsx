@@ -316,7 +316,6 @@ const BingoApp = () => {
                       const num = colIdx * 15 + i + 1;
                       const drawn = gameState.drawn.includes(num);
                       const isLast = num === lastDrawn;
-                      const { color } = getBingoLetter(num);
                       
                       return (
                         <div key={num} className="col-span-3 flex justify-center">

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format clean run
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format clean run backend frontend run-prod
 
 help:
 	@echo "Bingo Application - Available Commands:"
@@ -57,8 +57,14 @@ clean:
 	find . -type f -name ".coverage" -delete
 	find . -type f -name "coverage.xml" -delete
 
-run:
+backend:
 	cd backend && uvicorn app:app --reload --host 0.0.0.0 --port 8000
+
+frontend:
+	cd frontend && npm run dev
+
+run: backend frontend
+
 
 run-prod:
 	cd backend && uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
