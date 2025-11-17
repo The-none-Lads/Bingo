@@ -38,23 +38,23 @@ jobs:
       - name: Lint with flake8
         run: |
           # Stop the build if there are Python syntax errors or undefined names
-          flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=node_modules,frontend/node_modules
           # Exit-zero treats all errors as warnings
-          flake8 backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+          flake8 backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=node_modules,frontend/node_modules
 
       - name: Check formatting with black
         run: |
-          black --check backend/
+          black --check backend/ . --exclude=node_modules,frontend/node_modules
 
       - name: Sort imports with isort
         run: |
-          isort --check-only backend/
+          isort --check-only backend/ . --skip=node_modules --skip=frontend/node_modules
 
       - name: Type check with mypy
         run: |
           mypy backend --ignore-missing-imports || true
 
-      - name: Set up Node.js 18 for linting
+      - name: Set up Node.js 25 for linting
         uses: actions/setup-node@v4
         with:
           node-version: 25
@@ -67,7 +67,7 @@ jobs:
       - name: Lint frontend with ESLint
         run: |
           cd frontend
-          npx eslint . --ext .js,.jsx,.ts,.tsx
+          npx eslint . --ext .js,.jsx,.ts,.tsx 
 
       - name: Lint styles with Stylelint
         run: |
