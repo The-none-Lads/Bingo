@@ -54,7 +54,51 @@ jobs:
     - name: Type check with mypy
       run: |
         mypy backend --ignore-missing-imports || true
-    
+
+    - name: Set up Node.js 18 for linting
+      uses: actions/setup-node@v4
+      with:
+        node-version: 18
+
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm install
+
+    - name: Lint frontend with ESLint (warnings only)
+      run: |
+        cd frontend
+        npx eslint . --ext .js,.jsx,.ts,.tsx
+
+    - name: Lint styles with Stylelint (warnings only)
+      run: |
+        cd frontend
+        npx stylelint "**/*.{css,scss}"
+      
+    - name: Lint markdown with markdownlint (warnings only)
+      run: |
+        npx markdownlint "**/*.md"
+      
+    - name: Lint YAML with yamllint (warnings only)
+      run: |
+        pip install yamllint
+        yamllint .
+
+    - name: Lint JSON with jq (warnings only)
+      run: |
+        find . -name '*.json' -not -path '*/node_modules/*' -exec jq empty {} \;
+
+      
+    - name: Lint HTML with htmlhint (warnings only)
+      run: |
+        cd frontend
+        npx htmlhint "**/*.html"
+      
+    - name: Lint Dockerfiles with hadolint (warnings only)
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: ./Dockerfile
+
     - name: Run tests with pytest
       run: |
         cd backend
