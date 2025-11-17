@@ -95,7 +95,7 @@ const BingoApp = () => {
     };
 
     return () => wsRef.current?.close();
-  }, [gameId]);
+  }, [gameId, gameState?.drawn?.length]);
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
