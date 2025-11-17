@@ -1,12 +1,14 @@
-@import "tailwindcss";
+@import url("tailwindcss");
 
 @media print {
   body * {
     visibility: hidden;
   }
+
   #print-area, #print-area * {
     visibility: visible;
   }
+
   #print-area {
     display: block !important;
     position: absolute;
@@ -16,7 +18,8 @@
     background: white;
     padding: 1rem;
   }
+
   .page-break-inside-avoid {
-    page-break-inside: avoid;
+    break-inside: avoid;
   }
 }
