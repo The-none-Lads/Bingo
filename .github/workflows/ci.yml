@@ -142,11 +142,6 @@ jobs:
           npx stylelint "**/*.{css,scss}"
         continue-on-error: true
 
-      - name: Lint markdown with markdownlint (warnings only)
-        run: |
-          npx markdownlint "**/*.md"
-        continue-on-error: true
-
       - name: Lint YAML with yamllint (warnings only)
         run: |
           pip install yamllint
