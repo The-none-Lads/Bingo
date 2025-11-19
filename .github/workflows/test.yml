@@ -39,14 +39,14 @@ jobs:
       - name: Lint with flake8
         run: |
           # Stop the build if there are Python syntax errors or undefined names
-          flake8 backend \
+          flake8 . \
           --count \
           --select=E9,F63,F7,F82 \
           --show-source \
           --statistics \
           --exclude=node_modules,frontend/node_modules
           # Exit-zero treats all errors as warnings
-          flake8 backend \
+          flake8 . \
           --count \
           --exit-zero \
           --max-complexity=10 \
@@ -56,16 +56,15 @@ jobs:
 
       - name: Check formatting with black
         run: |
-          black --check backend/ . --exclude=node_modules,frontend/node_modules
+          black --check .
 
       - name: Sort imports with isort
         run: |
-          isort --check-only backend/ . --skip=node_modules \
-          --skip=frontend/node_modules
+          isort --check-only .
 
       - name: Type check with mypy
         run: |
-          mypy backend --ignore-missing-imports || true
+          mypy . --check-untyped-defs
 
       - name: Set up Node.js 25 for linting
         uses: actions/setup-node@v4
