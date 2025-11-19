@@ -1,4 +1,5 @@
 ---
+
 name: Tests
 
 on:
@@ -38,9 +39,20 @@ jobs:
       - name: Lint with flake8
         run: |
           # Stop the build if there are Python syntax errors or undefined names
-          flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=node_modules,frontend/node_modules
+          flake8 backend \
+          --count \
+          --select=E9,F63,F7,F82 \
+          --show-source \
+          --statistics \
+          --exclude=node_modules,frontend/node_modules
           # Exit-zero treats all errors as warnings
-          flake8 backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=node_modules,frontend/node_modules
+          flake8 backend \
+          --count \
+          --exit-zero \
+          --max-complexity=10 \
+          --max-line-length=127 \
+          --statistics \
+          --exclude=node_modules,frontend/node_modules
 
       - name: Check formatting with black
         run: |
@@ -48,7 +60,8 @@ jobs:
 
       - name: Sort imports with isort
         run: |
-          isort --check-only backend/ . --skip=node_modules --skip=frontend/node_modules
+          isort --check-only backend/ . --skip=node_modules \
+          --skip=frontend/node_modules
 
       - name: Type check with mypy
         run: |
@@ -67,7 +80,7 @@ jobs:
       - name: Lint frontend with ESLint
         run: |
           cd frontend
-          npx eslint . --ext .js,.jsx,.ts,.tsx 
+          npx eslint . --ext .js,.jsx,.ts,.tsx
 
       - name: Lint styles with Stylelint
         run: |
@@ -77,11 +90,15 @@ jobs:
       - name: Lint YAML with yamllint
         run: |
           pip install yamllint
-          yamllint .
+          yamllint . --config-file .yamllint
 
       - name: Lint JSON with jq
         run: |
-          find . -name '*.json' -not -path '*/node_modules/*' -exec jq empty {} \;
+          find . \
+          -name '*.json' \
+          -not \
+          -path '*/node_modules/*' \
+          -exec jq empty {} \;
 
       - name: Lint HTML with htmlhint
         run: |

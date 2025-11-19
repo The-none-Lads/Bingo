@@ -37,9 +37,14 @@ test-coverage:
 	@echo "Coverage report generated in backend/htmlcov/index.html"
 
 lint:
-	flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
-	flake8 backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-	mypy backend --ignore-missing-imports || true
+	-flake8 .
+	-black --check .
+	-isort --check-only .
+	-mypy . --check-untyped-defs
+	-cd frontend && npx eslint . --ext .js,.jsx,.ts,.tsx
+	-cd frontend && npx stylelint "**/*.{css,scss}"
+	-cd frontend && npx htmlhint "frontend/**/*.html"
+	-yamllint . --config-file .yamllint
 
 format:
 	black .

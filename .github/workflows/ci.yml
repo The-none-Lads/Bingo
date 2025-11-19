@@ -1,4 +1,5 @@
 ---
+
 name: CI
 
 on:
@@ -105,11 +106,16 @@ jobs:
           python-version: 3.13
 
       - name: Lint with flake8 (warnings only)
-        run: flake8 . --exclude=node_modules,frontend/node_modules --count --statistics
+        run: |
+          flake8 . --exclude=node_modules,frontend/node_modules \
+          --count \
+          --statistics
         continue-on-error: true
 
       - name: Check formatting with black (warnings only)
-        run: black --check . --exclude node_modules/ --exclude frontend/node_modules/
+        run: |
+          black --check . --exclude node_modules/ \
+          --exclude frontend/node_modules/
         continue-on-error: true
 
       - name: Sort imports with isort (warnings only)
@@ -145,7 +151,7 @@ jobs:
       - name: Lint YAML with yamllint (warnings only)
         run: |
           pip install yamllint
-          yamllint .
+          yamllint . --config-file .yamllint
         continue-on-error: true
 
       - name: Lint JSON with jq (warnings only)

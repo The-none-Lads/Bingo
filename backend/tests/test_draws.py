@@ -1,4 +1,3 @@
-import pytest
 from logic.draws import DrawEngine
 
 
