@@ -75,8 +75,15 @@ class TestCardSerialization:
 
     def test_serialize_card(self):
         """Test serializing a card to string."""
-        card = [[1, 2, 3, 4, 5] for _ in range(5)]
+        card: list[list[int | str]] = [[1, 2, 3, 4, 5] for _ in range(5)]
         card[2][2] = "FREE"
+
+        serialized = serialize_card(card)
+
+        assert isinstance(serialized, str)
+        assert "FREE" in serialized
+        assert ";" in serialized  # Row separator
+        assert "," in serialized  # Column separator
 
         serialized = serialize_card(card)
 

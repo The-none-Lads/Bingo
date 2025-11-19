@@ -1,9 +1,9 @@
 import hashlib
 import random
-from typing import List
+from typing import List, Union
 
 
-def generate_75_ball_card() -> List[List[int | str]]:
+def generate_75_ball_card() -> List[List[Union[int | str]]]:
     card = []
     columns = {
         0: list(range(1, 16)),
@@ -15,7 +15,9 @@ def generate_75_ball_card() -> List[List[int | str]]:
     for col_idx in range(5):
         nums = random.sample(columns[col_idx], 5)
         card.append(nums)
-    grid = [[card[col][row] for col in range(5)] for row in range(5)]
+    grid = List[List[Union[int, str]]] = [
+        [card[col][row] for col in range(5)] for row in range(5)
+    ]
     grid[2][2] = "FREE"
     return grid
 

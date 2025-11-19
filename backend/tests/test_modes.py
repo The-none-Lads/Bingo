@@ -98,9 +98,8 @@ class TestFourCorners:
 
     def test_four_corners_with_extra_numbers(self, sample_grid):
         """Test four corners with additional numbers drawn."""
-        drawn = [1, 61, 5, 65, 10, 20, 30]
+        drawn: list[int] = [1, 61, 5, 65, 10, 20, 30]
         assert four_corners(sample_grid, drawn) is True
-
 
 class TestDiagonals:
     """Test diagonal win conditions."""
@@ -117,7 +116,7 @@ class TestDiagonals:
 
     def test_top_right_to_bottom_left(self, sample_grid):
         """Test anti-diagonal (top-right to bottom-left)."""
-        drawn = [61, 47, 19, 5]  # FREE is at [2][2]
+        drawn: list[int] = [61, 47, 19, 5]  # FREE is at [2][2]
         assert diagonals(sample_grid, drawn) is True
 
     def test_both_diagonals(self, sample_grid):
@@ -317,7 +316,7 @@ class TestEdgeCases:
 
     def test_empty_grid(self):
         """Test with empty grid."""
-        grid = [["FREE"] * 5 for _ in range(5)]
+        grid: list[list[int | str]] = [["FREE"] * 5 for _ in range(5)]
         drawn = list(range(1, 76))
 
         assert rows_completed(grid, drawn) == 5
