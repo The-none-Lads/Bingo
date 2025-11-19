@@ -186,5 +186,5 @@ jobs:
       - name: Lint Dockerfiles with hadolint (warnings only)
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: ./Dockerfile
+          recursive: true
         continue-on-error: true
