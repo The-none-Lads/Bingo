@@ -1,35 +1,41 @@
-import hashlib
 import random
-from typing import List, Union
+import hashlib
+from typing import List, Union, Dict, Any, Tuple
 
 
-def generate_75_ball_card() -> List[List[Union[int | str]]]:
-    card = []
+def generate_75_ball_card() -> List[List[Union[int, str]]]:
+    # Each column has its own number range
     columns = {
-        0: list(range(1, 16)),
-        1: list(range(16, 31)),
-        2: list(range(31, 46)),
-        3: list(range(46, 61)),
-        4: list(range(61, 76)),
+        0: list(range(1, 16)),  # B
+        1: list(range(16, 31)),  # I
+        2: list(range(31, 46)),  # N
+        3: list(range(46, 61)),  # G
+        4: list(range(61, 76)),  # O
     }
+
+    # Build card as a list of columns
+    card = []
     for col_idx in range(5):
         nums = random.sample(columns[col_idx], 5)
         card.append(nums)
-    grid = List[List[Union[int, str]]] = [
-        [card[col][row] for col in range(5)] for row in range(5)
-    ]
+
+    # Transpose into a 5x5 grid (rows of values)
+    grid = [[card[col][row] for col in range(5)] for row in range(5)]
+
+    # Middle square is always FREE
     grid[2][2] = "FREE"
+
     return grid
 
 
-def serialize_card(grid: List[List[int | str]]) -> str:
+def serialize_card(grid: List[List[Union[int, str]]]) -> str:
     rows = []
     for r in grid:
         rows.append(",".join(str(x) for x in r))
     return ";".join(rows)
 
 
-def deserialize_card(serialized: str) -> List[List[int | str]]:
+def deserialize_card(serialized: str) -> List[List[Union[int, str]]]:
     rows = serialized.split(";")
     grid = []
     for r in rows:
