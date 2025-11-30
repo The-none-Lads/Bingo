@@ -1,6 +1,6 @@
-import random
 import hashlib
-from typing import List, Union, Dict, Any, Tuple
+import random
+from typing import List, Union
 
 
 def generate_75_ball_card() -> List[List[Union[int, str]]]:
@@ -14,13 +14,15 @@ def generate_75_ball_card() -> List[List[Union[int, str]]]:
     }
 
     # Build card as a list of columns
-    card = []
+    card: List[List[int]] = []
     for col_idx in range(5):
         nums = random.sample(columns[col_idx], 5)
         card.append(nums)
 
     # Transpose into a 5x5 grid (rows of values)
-    grid = [[card[col][row] for col in range(5)] for row in range(5)]
+    grid: List[List[Union[int, str]]] = [
+        [card[col][row] for col in range(5)] for row in range(5)
+    ]
 
     # Middle square is always FREE
     grid[2][2] = "FREE"
@@ -29,7 +31,7 @@ def generate_75_ball_card() -> List[List[Union[int, str]]]:
 
 
 def serialize_card(grid: List[List[Union[int, str]]]) -> str:
-    rows = []
+    rows: List[str] = []
     for r in grid:
         rows.append(",".join(str(x) for x in r))
     return ";".join(rows)
@@ -37,9 +39,9 @@ def serialize_card(grid: List[List[Union[int, str]]]) -> str:
 
 def deserialize_card(serialized: str) -> List[List[Union[int, str]]]:
     rows = serialized.split(";")
-    grid = []
+    grid: List[List[Union[int, str]]] = []
     for r in rows:
-        vals = []
+        vals: List[Union[int, str]] = []
         for v in r.split(","):
             vals.append("FREE" if v == "FREE" else int(v))
         grid.append(vals)

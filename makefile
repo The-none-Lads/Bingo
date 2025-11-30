@@ -23,7 +23,7 @@ install-dev:
 	pip install -r backend/requirements-dev.txt
 
 test:
-	cd backend && pytest tests/ -v
+	pytest --cov=backend --cov-report=term-missing -v
 
 test-unit:
 	cd backend && pytest tests/ -v -m unit

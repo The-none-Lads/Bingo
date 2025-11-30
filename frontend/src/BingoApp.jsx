@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
+const POLL_INTERVAL = 2000; // Poll every 2 seconds as fallback
 
 // Helper function to get letter and color for a number
 const getBingoLetter = (num) => {
@@ -16,7 +17,7 @@ const getBingoLetter = (num) => {
 // Animated Bingo Ball Component
 const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
   const { letter, color } = getBingoLetter(number);
-  
+
   const sizeClasses = {
     small: 'w-12 h-12 text-sm',
     medium: 'w-20 h-20 text-xl',
@@ -29,11 +30,11 @@ const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
     large: 'text-3xl',
     xlarge: 'text-5xl',
   };
+
   return (
     <div
       className={`${sizeClasses[size]} ${color} rounded-full flex flex-col items-center justify-center text-white font-bold shadow-2xl border-4 border-white/30 ${isAnimating ? 'animate-bounce' : ''}`}
     >
-      {/* Letter with serif font so "I" has horizontal bars */}
       <div
         className={`${letterSizeClasses[size]} opacity-90 font-serif`}
         style={{ fontFamily: '"Georgia", "Times New Roman", serif' }}
@@ -47,7 +48,9 @@ const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
 
 const BingoApp = () => {
   const [view, setView] = useState('display');
-  const [gameId, setGameId] = useState('demo');
+  const [gameId, setGameId] = useState(() => {
+    return localStorage.getItem('bingo_game_id') || 'demo';
+  });
   const [gameState, setGameState] = useState(null);
   const [lastDrawn, setLastDrawn] = useState(null);
   const [validationResult, setValidationResult] = useState(null);
@@ -58,44 +61,144 @@ const BingoApp = () => {
   const [customCount, setCustomCount] = useState(10);
   const [openCard, setOpenCard] = useState(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef(null);
+  const pollIntervalRef = useRef(null);
+  const lastUpdateRef = useRef(0);
 
+  // Save gameId to localStorage when it changes and fetch cards
+  useEffect(() => {
+    localStorage.setItem('bingo_game_id', gameId);
+    fetchCardsForGame();
+  }, [gameId, fetchCardsForGame]);
+
+  // Function to fetch all cards for the current game
+  const fetchCardsForGame = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/games/${gameId}/cards`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.cards && data.cards.length > 0) {
+          setGeneratedCards(data.cards);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch cards:', err);
+    }
+  }, [gameId]);
+
+  // Function to fetch game state
+ const fetchGameState = useCallback(async () => {
+  try {
+    const response = await fetch(`${API_BASE}/games/${gameId}/state`);
+    if (response.ok) {
+      const data = await response.json();
+      const now = Date.now();
+      if (!wsConnected || now - lastUpdateRef.current > 1000) {
+        updateGameState(data, 'poll');
+      }
+    }
+  } catch (err) {
+    console.error('Failed to fetch game state:', err);
+  }
+}, [gameId, wsConnected, updateGameState]);
+
+  // Function to update game state (used by both WS and polling)
+  const updateGameState = useCallback((data, source = 'unknown') => {
+    if (!data) return;
+
+    const prevLength = gameState?.drawn?.length || 0;
+    const newLength = data.drawn?.length || 0;
+
+    if (newLength > prevLength && data.drawn && data.drawn.length > 0) {
+      const newNum = data.drawn[data.drawn.length - 1];
+      setLastDrawn(newNum);
+      setIsDrawing(true);
+      setTimeout(() => setIsDrawing(false), 2000);
+    }
+
+    setGameState(data);
+
+    if (source === 'websocket') {
+      lastUpdateRef.current = Date.now();
+    }
+  }, [gameState]);
+
+  // WebSocket connection
   useEffect(() => {
     const ws = new WebSocket(`ws://localhost:8000/ws/${gameId}`);
     wsRef.current = ws;
 
-    ws.onopen = () => console.log('✅ WebSocket connected');
+    ws.onopen = () => {
+      console.log('✅ WebSocket connected');
+      setWsConnected(true);
+    };
+
+    ws.onclose = () => {
+      console.log('❌ WebSocket disconnected');
+      setWsConnected(false);
+    };
+
+    ws.onerror = () => {
+      console.log('⚠️ WebSocket error');
+      setWsConnected(false);
+    };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
-        if (data.type === "state_update" && data.state) {
-          const prevLength = gameState?.drawn?.length || 0;
-          const newLength = data.state.drawn?.length || 0;
-          
-          if (newLength > prevLength && data.state.drawn.length > 0) {
-            const newNum = data.state.drawn[data.state.drawn.length - 1];
-            setLastDrawn(newNum);
-            setIsDrawing(true);
-            setTimeout(() => setIsDrawing(false), 2000);
-          }
-          
-          setGameState(data.state);
+
+        if (data && data.type === "state_update" && data.state) {
+          updateGameState(data.state, 'websocket');
         }
-        
-        if (data.type === "celebration") {
+
+        if (data && data.type === "celebration") {
           setCelebrating(true);
           launchConfetti();
           setTimeout(() => setCelebrating(false), 5000);
         }
       } catch (err) {
-        console.error('WebSocket error:', err);
+        console.error('WebSocket message error:', err);
       }
     };
 
-    return () => wsRef.current?.close();
-  }, [gameId, gameState?.drawn?.length]);
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [gameId, updateGameState]);
+
+  // Polling as fallback
+  useEffect(() => {
+    fetchGameState();
+    pollIntervalRef.current = setInterval(() => {
+      fetchGameState();
+    }, POLL_INTERVAL);
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [gameId, wsConnected, fetchGameState]);
+
+  // Polling as fallback
+  useEffect(() => {
+    // Initial fetch
+    fetchGameState();
+
+    // Set up polling interval
+    pollIntervalRef.current = setInterval(() => {
+      fetchGameState();
+    }, POLL_INTERVAL);
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [gameId, wsConnected, fetchGameState]);
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
@@ -104,6 +207,8 @@ const BingoApp = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, ball_set: 75, stage })
       });
+      // Force immediate update
+      setTimeout(fetchGameState, 100);
     } catch (err) {
       console.error('Failed to start game:', err);
     }
@@ -112,6 +217,8 @@ const BingoApp = () => {
   const drawNumber = async () => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/draw`, { method: 'POST' });
+      // Force immediate update
+      setTimeout(fetchGameState, 100);
     } catch (err) {
       console.error('Failed to draw:', err);
     }
@@ -120,6 +227,7 @@ const BingoApp = () => {
   const setStage = async (stage) => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { method: 'POST' });
+      setTimeout(fetchGameState, 100);
     } catch (err) {
       console.error('Failed to set stage:', err);
     }
@@ -134,9 +242,15 @@ const BingoApp = () => {
       });
       const data = await res.json();
       setGeneratedCards(data.cards);
+      // Also refetch to get the complete list
+      setTimeout(fetchCardsForGame, 100);
     } catch (err) {
       console.error('Failed to generate cards:', err);
     }
+  };
+
+  const clearGeneratedCards = () => {
+    setGeneratedCards([]);
   };
 
   const validateCard = async () => {
@@ -221,6 +335,12 @@ const BingoApp = () => {
   if (view === 'display') {
     return (
       <div className="min-h-screen bg-black text-white p-8 relative overflow-hidden">
+        {/* Connection Status Indicator */}
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-full border border-gray-700">
+          <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+          <span className="text-xs text-gray-300">{wsConnected ? 'Live' : 'Polling'}</span>
+        </div>
+
         {/* Casino Background Pattern */}
         <div className="absolute inset-0 opacity-10">
           <div className="absolute inset-0" style={{
@@ -242,30 +362,28 @@ const BingoApp = () => {
               </h1>
               <div className="absolute -bottom-2 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 rounded"></div>
             </div>
-          {/* NEW: Game ID input + Settings button */}
-          <div className="flex items-center gap-4">
-            <input
-              type="text"
-              value={gameId}
-              onChange={(e) => setGameId(e.target.value)}
-              className="px-3 py-2 rounded bg-black/50 border border-yellow-500 text-yellow-300 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-              placeholder="Game ID"
-            />
-            <button
-              onClick={() => setView('admin')}
-              className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg"
-            >
-              <Settings className="w-6 h-6" />
-            </button>
+            <div className="flex items-center gap-4">
+              <input
+                type="text"
+                value={gameId}
+                onChange={(e) => setGameId(e.target.value)}
+                className="px-3 py-2 rounded bg-black/50 border border-yellow-500 text-yellow-300 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Game ID"
+              />
+              <button
+                onClick={() => setView('admin')}
+                className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg"
+              >
+                <Settings className="w-6 h-6" />
+              </button>
+            </div>
           </div>
-        </div>
 
           {gameState && (
             <>
               {/* Current Ball Display - Center Stage */}
               <div className="mb-12 flex justify-center">
                 <div className="relative">
-                  {/* Spotlight Effect */}
                   <div className="absolute inset-0 blur-3xl opacity-50 bg-gradient-to-r from-yellow-400 via-red-500 to-purple-500 animate-pulse"></div>
                   
                   <div className="relative bg-gradient-to-br from-gray-900 to-black border-4 border-yellow-500 rounded-3xl p-12 shadow-2xl">
@@ -362,7 +480,13 @@ const BingoApp = () => {
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${wsConnected ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+              <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`}></div>
+              {wsConnected ? 'Connected' : 'Polling Mode'}
+            </div>
+          </div>
           <button
             onClick={() => setView('display')}
             className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all"
@@ -424,7 +548,6 @@ const BingoApp = () => {
                 Draw Number
               </button>
 
-              {/* Last Drawn Display in Admin */}
               {lastDrawn && (
                 <div className="bg-gradient-to-r from-purple-100 to-blue-100 rounded-lg p-4 border-2 border-purple-300">
                   <div className="text-center">
@@ -461,10 +584,20 @@ const BingoApp = () => {
 
           {/* Card Generation */}
           <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <Printer className="w-6 h-6" />
-              Card Generation
-            </h2>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                <Printer className="w-6 h-6" />
+                Card Generation
+              </h2>
+              {generatedCards.length > 0 && (
+                <button
+                  onClick={clearGeneratedCards}
+                  className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+                >
+                  Clear Cards
+                </button>
+              )}
+            </div>
             
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
@@ -508,7 +641,10 @@ const BingoApp = () => {
               {generatedCards.length > 0 && (
                 <div className="border rounded-lg p-4 max-h-96 overflow-y-auto">
                   <div className="flex justify-between items-center mb-3">
-                    <h3 className="font-semibold">Generated Cards ({generatedCards.length})</h3>
+                    <h3 className="font-semibold">
+                      Generated Cards ({generatedCards.length})
+                      <span className="ml-2 text-xs text-gray-500">• Saved on server</span>
+                    </h3>
                     <button
                       onClick={() => window.print()}
                       className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"

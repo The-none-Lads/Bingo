@@ -175,6 +175,22 @@ def get_card(public_id: str):
     }
 
 
+@app.get("/games/{game_id}/cards")
+def get_game_cards(game_id: str):
+    """Get all cards for a specific game"""
+    game_cards = []
+    for public_id, card_data in db.cards.items():
+        if card_data.get("game_id") == game_id:
+            game_cards.append(
+                {
+                    "public_id": public_id,
+                    "serial": card_data["serial"],
+                    "grid": card_data["grid"],
+                }
+            )
+    return {"count": len(game_cards), "cards": game_cards}
+
+
 # -------------------------
 # Validation endpoint
 # -------------------------
