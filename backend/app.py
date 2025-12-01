@@ -68,7 +68,7 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
     await manager.connect(game_id, websocket)
     try:
         while True:
-            msg = await websocket.receive_text()
+            await websocket.receive_text()
             # optionally ignore or log
     except WebSocketDisconnect:
         manager.disconnect(game_id, websocket)

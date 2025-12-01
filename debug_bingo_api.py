@@ -33,7 +33,7 @@ def main():
     print("=== DEBUG BINGO API TEST ===")
 
     # 1. Start a game
-    start = debug_request(
+    debug_request(
         "POST",
         f"{BASE}/games/{GAME_ID}/start",
         json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},

@@ -3,6 +3,7 @@ import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
 const POLL_INTERVAL = 20000; // Poll every 2 seconds as fallback
+const CARD_FETCH_INTERVAL = 300000; // Fetch cards every minute just in case
 
 // Helper function to get letter and color for a number
 const getBingoLetter = (num) => {
@@ -65,6 +66,7 @@ const BingoApp = () => {
   const wsRef = useRef(null);
   const lastUpdateRef = useRef(0);
   const pollIntervalRef = useRef(null);
+  const cardIntervalRef = useRef(null);
 
   // Function to fetch all cards for the current game
   const fetchCardsForGame = useCallback(async () => {
@@ -171,18 +173,65 @@ const BingoApp = () => {
 
   // Polling as fallback
   useEffect(() => {
+    if (wsConnected) return; // skip polling if WS is active
 
     // Set up polling interval
-    pollIntervalRef.current = setInterval(() => {
-      fetchGameState();
+    pollIntervalRef.current = setInterval(async () => {
+      await fetchGameState();
+
+      // After polling, check if WS is closed and try reconnect
+      if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+        console.log("🔄 Attempting reconnect after poll...");
+        const ws = new WebSocket(`ws://localhost:8000/ws/${gameId}`);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          console.log("✅ WebSocket reconnected");
+          setWsConnected(true);
+        };
+        ws.onclose = () => setWsConnected(false);
+        ws.onerror = () => setWsConnected(false);
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data?.type === "state_update" && data.state) {
+              updateGameState(data.state, "websocket");
+            }
+            if (data?.type === "celebration") {
+              setCelebrating(true);
+              launchConfetti();
+              setTimeout(() => setCelebrating(false), 5000);
+            }
+          } catch (err) {
+            console.error("WebSocket message error:", err);
+          }
+        };
+      }
     }, POLL_INTERVAL);
 
+  return () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+}, [gameId, wsConnected, fetchGameState, updateGameState]);
+
+
+  // update cards on page load and after 1 minute
+  useEffect(() => {
+
+    // Set up polling interval
+    cardIntervalRef.current = setInterval(() => {
+      fetchCardsForGame();
+    }, CARD_FETCH_INTERVAL);
+
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
+      if (cardIntervalRef.current) {
+        clearInterval(cardIntervalRef.current);
       }
     };
-  }, [gameId, wsConnected , fetchGameState]);
+  }, [gameId, wsConnected , fetchCardsForGame]);
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
