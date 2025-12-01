@@ -69,7 +69,3 @@ frontend:
 	cd frontend && npm run dev
 
 run: backend frontend
-
-
-run-prod:
-	cd backend && uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4

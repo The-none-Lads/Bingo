@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
-const POLL_INTERVAL = 2000; // Poll every 2 seconds as fallback
+const POLL_INTERVAL = 20000; // Poll every 2 seconds as fallback
 
 // Helper function to get letter and color for a number
 const getBingoLetter = (num) => {
@@ -63,14 +63,8 @@ const BingoApp = () => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef(null);
-  const pollIntervalRef = useRef(null);
   const lastUpdateRef = useRef(0);
-
-  // Save gameId to localStorage when it changes and fetch cards
-  useEffect(() => {
-    localStorage.setItem('bingo_game_id', gameId);
-    fetchCardsForGame();
-  }, [gameId, fetchCardsForGame]);
+  const pollIntervalRef = useRef(null);
 
   // Function to fetch all cards for the current game
   const fetchCardsForGame = useCallback(async () => {
@@ -86,22 +80,6 @@ const BingoApp = () => {
       console.error('Failed to fetch cards:', err);
     }
   }, [gameId]);
-
-  // Function to fetch game state
- const fetchGameState = useCallback(async () => {
-  try {
-    const response = await fetch(`${API_BASE}/games/${gameId}/state`);
-    if (response.ok) {
-      const data = await response.json();
-      const now = Date.now();
-      if (!wsConnected || now - lastUpdateRef.current > 1000) {
-        updateGameState(data, 'poll');
-      }
-    }
-  } catch (err) {
-    console.error('Failed to fetch game state:', err);
-  }
-}, [gameId, wsConnected, updateGameState]);
 
   // Function to update game state (used by both WS and polling)
   const updateGameState = useCallback((data, source = 'unknown') => {
@@ -123,6 +101,28 @@ const BingoApp = () => {
       lastUpdateRef.current = Date.now();
     }
   }, [gameState]);
+
+  // Function to fetch game state
+  const fetchGameState = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/games/${gameId}/state`);
+      if (response.ok) {
+        const data = await response.json();
+        const now = Date.now();
+        if (!wsConnected || now - lastUpdateRef.current > 1000) {
+          updateGameState(data, 'poll');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch game state:', err);
+    }
+  }, [gameId, wsConnected, updateGameState]);
+
+  // Save gameId to localStorage when it changes and fetch cards
+  useEffect(() => {
+    localStorage.setItem('bingo_game_id', gameId);
+    fetchCardsForGame();
+  }, [gameId, fetchCardsForGame]);
 
   // WebSocket connection
   useEffect(() => {
@@ -167,26 +167,10 @@ const BingoApp = () => {
         wsRef.current.close();
       }
     };
-  }, [gameId, updateGameState]);
+  }, [gameId, ]);
 
   // Polling as fallback
   useEffect(() => {
-    fetchGameState();
-    pollIntervalRef.current = setInterval(() => {
-      fetchGameState();
-    }, POLL_INTERVAL);
-
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
-    };
-  }, [gameId, wsConnected, fetchGameState]);
-
-  // Polling as fallback
-  useEffect(() => {
-    // Initial fetch
-    fetchGameState();
 
     // Set up polling interval
     pollIntervalRef.current = setInterval(() => {
@@ -198,7 +182,7 @@ const BingoApp = () => {
         clearInterval(pollIntervalRef.current);
       }
     };
-  }, [gameId, wsConnected, fetchGameState]);
+  }, [gameId, wsConnected , fetchGameState]);
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
@@ -208,7 +192,9 @@ const BingoApp = () => {
         body: JSON.stringify({ mode, ball_set: 75, stage })
       });
       // Force immediate update
-      setTimeout(fetchGameState, 100);
+      if (!wsConnected) {
+        setTimeout(fetchGameState, 100);
+      }
     } catch (err) {
       console.error('Failed to start game:', err);
     }
@@ -218,7 +204,9 @@ const BingoApp = () => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/draw`, { method: 'POST' });
       // Force immediate update
-      setTimeout(fetchGameState, 100);
+      if (!wsConnected) {
+        setTimeout(fetchGameState, 100);
+      }
     } catch (err) {
       console.error('Failed to draw:', err);
     }
@@ -227,7 +215,9 @@ const BingoApp = () => {
   const setStage = async (stage) => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { method: 'POST' });
-      setTimeout(fetchGameState, 100);
+      if (!wsConnected) {
+        setTimeout(fetchGameState, 100);
+      }
     } catch (err) {
       console.error('Failed to set stage:', err);
     }
@@ -255,7 +245,7 @@ const BingoApp = () => {
 
   const validateCard = async () => {
     if (!cardToValidate.trim()) return;
-    
+
     try {
       const res = await fetch(`${API_BASE}/validate`, {
         method: 'POST',
@@ -264,7 +254,7 @@ const BingoApp = () => {
       });
       const data = await res.json();
       setValidationResult(data);
-      
+
       if (data.valid) {
         setCelebrating(true);
         launchConfetti();
@@ -278,11 +268,11 @@ const BingoApp = () => {
   const launchConfetti = () => {
     const canvas = confettiRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    
+
     const pieces = Array.from({ length: 150 }, () => ({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height - canvas.height,
@@ -303,7 +293,7 @@ const BingoApp = () => {
         ctx.fillStyle = p.color;
         ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
         ctx.restore();
-        
+
         p.y += p.speed;
         p.rotation += p.rotationSpeed;
         if (p.y > canvas.height) {
@@ -313,7 +303,7 @@ const BingoApp = () => {
       });
       animationId = requestAnimationFrame(draw);
     };
-    
+
     draw();
     setTimeout(() => {
       if (animationId) cancelAnimationFrame(animationId);
@@ -347,9 +337,9 @@ const BingoApp = () => {
             backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)`
           }}></div>
         </div>
-        
+
         <canvas ref={confettiRef} className="fixed inset-0 pointer-events-none z-50" />
-        
+
         <div className="max-w-7xl mx-auto relative z-10">
           {/* Header with Neon Effect */}
           <div className="flex justify-between items-center mb-12">
@@ -385,7 +375,7 @@ const BingoApp = () => {
               <div className="mb-12 flex justify-center">
                 <div className="relative">
                   <div className="absolute inset-0 blur-3xl opacity-50 bg-gradient-to-r from-yellow-400 via-red-500 to-purple-500 animate-pulse"></div>
-                  
+
                   <div className="relative bg-gradient-to-br from-gray-900 to-black border-4 border-yellow-500 rounded-3xl p-12 shadow-2xl">
                     {lastDrawn ? (
                       <div className="flex flex-col items-center space-y-4">
@@ -434,7 +424,7 @@ const BingoApp = () => {
                       const num = colIdx * 15 + i + 1;
                       const drawn = gameState.drawn.includes(num);
                       const isLast = num === lastDrawn;
-                      
+
                       return (
                         <div key={num} className="col-span-3 flex justify-center">
                           {drawn ? (
@@ -502,7 +492,7 @@ const BingoApp = () => {
               <Play className="w-6 h-6" />
               Game Controls
             </h2>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2">Game ID</label>
@@ -567,11 +557,10 @@ const BingoApp = () => {
                       <button
                         key={stage}
                         onClick={() => setStage(stage)}
-                        className={`px-4 py-2 rounded-lg transition-all ${
-                          gameState?.stage === stage
-                            ? 'bg-purple-600 text-white'
-                            : 'bg-gray-200 hover:bg-gray-300'
-                        }`}
+                        className={`px-4 py-2 rounded-lg transition-all ${gameState?.stage === stage
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-gray-200 hover:bg-gray-300'
+                          }`}
                       >
                         {stage}
                       </button>
@@ -598,7 +587,7 @@ const BingoApp = () => {
                 </button>
               )}
             </div>
-            
+
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
                 <button
@@ -620,7 +609,7 @@ const BingoApp = () => {
                   100 Cards
                 </button>
               </div>
-              
+
               <div className="flex space-x-2">
                 <input
                   type="number"
@@ -665,7 +654,7 @@ const BingoApp = () => {
                         {openCard === card.public_id && (
                           <div className="p-4">
                             <div className="grid grid-cols-5 gap-1">
-                              {["B","I","N","G","O"].map((letter, idx) => {
+                              {["B", "I", "N", "G", "O"].map((letter, idx) => {
                                 const colors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-purple-500'];
                                 return (
                                   <div key={letter} className={`${colors[idx]} text-white text-center font-bold p-1`}>
@@ -698,7 +687,7 @@ const BingoApp = () => {
               <CheckCircle2 className="w-6 h-6" />
               Card Validation
             </h2>
-            
+
             <div className="flex gap-3 mb-4">
               <input
                 type="text"
@@ -737,9 +726,8 @@ const BingoApp = () => {
                         return (
                           <div
                             key={`${ridx}-${cidx}`}
-                            className={`aspect-square flex items-center justify-center text-lg font-bold rounded ${
-                              marked ? 'bg-blue-500 text-white' : 'bg-gray-200'
-                            }`}
+                            className={`aspect-square flex items-center justify-center text-lg font-bold rounded ${marked ? 'bg-blue-500 text-white' : 'bg-gray-200'
+                              }`}
                           >
                             {cell === 'FREE' ? '★' : cell}
                           </div>
@@ -791,7 +779,7 @@ const BingoApp = () => {
                 Card ID: {card.public_id}
               </div>
               <div className="grid grid-cols-5 gap-1">
-                {["B","I","N","G","O"].map((letter, idx) => {
+                {["B", "I", "N", "G", "O"].map((letter, idx) => {
                   const colors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-purple-500'];
                   return (
                     <div key={letter} className={`${colors[idx]} text-white text-center font-bold p-1`}>
@@ -802,9 +790,8 @@ const BingoApp = () => {
                 {card.grid.flat().map((cell, i) => (
                   <div
                     key={i}
-                    className={`border text-center p-2 aspect-square flex items-center justify-center ${
-                      cell === "FREE" ? "bg-yellow-200 font-bold" : ""
-                    }`}
+                    className={`border text-center p-2 aspect-square flex items-center justify-center ${cell === "FREE" ? "bg-yellow-200 font-bold" : ""
+                      }`}
                   >
                     {cell}
                   </div>
