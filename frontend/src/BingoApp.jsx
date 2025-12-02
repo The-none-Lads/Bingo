@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
-
-const API_BASE = 'http://localhost:8000';
-const POLL_INTERVAL = 20000; // Poll every 2 seconds as fallback
-const CARD_FETCH_INTERVAL = 300000; // Fetch cards every minute just in case
+import { getConfig } from './config';
 
 // Helper function to get letter and color for a number
 const getBingoLetter = (num) => {
@@ -67,6 +64,26 @@ const BingoApp = () => {
   const lastUpdateRef = useRef(0);
   const pollIntervalRef = useRef(null);
   const cardIntervalRef = useRef(null);
+  const [config, setConfig] = useState(null);
+  const [configLoaded, setConfigLoaded] = useState(false);
+
+  useEffect(() => {
+    getConfig().then(cfg => {
+      setConfig(cfg);
+      setConfigLoaded(true);
+      // Set default game ID from config if not in localStorage
+      const storedGameId = localStorage.getItem('bingo_game_id');
+      if (!storedGameId) {
+        setGameId(cfg.gameIdDefault || 'demo');
+      }
+    });
+  }, []);
+
+
+  const API_BASE = config.apiBaseUrl;
+  const WS_BASE = config.wsBaseUrl;
+  const POLL_INTERVAL = config.pollInterval;
+  const CARD_FETCH_INTERVAL = config.cardFetchInterval;
 
   // Function to fetch all cards for the current game
   const fetchCardsForGame = useCallback(async () => {
@@ -81,7 +98,7 @@ const BingoApp = () => {
     } catch (err) {
       console.error('Failed to fetch cards:', err);
     }
-  }, [gameId]);
+  }, [gameId, API_BASE]);
 
   // Function to update game state (used by both WS and polling)
   const updateGameState = useCallback((data, source = 'unknown') => {
@@ -118,7 +135,7 @@ const BingoApp = () => {
     } catch (err) {
       console.error('Failed to fetch game state:', err);
     }
-  }, [gameId, wsConnected, updateGameState]);
+  }, [gameId, wsConnected, updateGameState, API_BASE]);
 
   // Save gameId to localStorage when it changes and fetch cards
   useEffect(() => {
@@ -128,7 +145,7 @@ const BingoApp = () => {
 
   // WebSocket connection
   useEffect(() => {
-    const ws = new WebSocket(`ws://localhost:8000/ws/${gameId}`);
+    const ws = new WebSocket(`${WS_BASE}/ws/${gameId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -169,7 +186,7 @@ const BingoApp = () => {
         wsRef.current.close();
       }
     };
-  }, [gameId, ]);
+  }, [gameId, WS_BASE]);
 
   // Polling as fallback
   useEffect(() => {
@@ -209,13 +226,13 @@ const BingoApp = () => {
       }
     }, POLL_INTERVAL);
 
-  return () => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-  };
-}, [gameId, wsConnected, fetchGameState, updateGameState]);
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, [gameId, wsConnected, fetchGameState, updateGameState, POLL_INTERVAL, launchConfetti]);
 
 
   // update cards on page load and after 1 minute
@@ -231,7 +248,7 @@ const BingoApp = () => {
         clearInterval(cardIntervalRef.current);
       }
     };
-  }, [gameId, wsConnected , fetchCardsForGame]);
+  }, [gameId, wsConnected, fetchCardsForGame, CARD_FETCH_INTERVAL]);
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
@@ -314,7 +331,9 @@ const BingoApp = () => {
     }
   };
 
-  const launchConfetti = () => {
+  const launchConfetti = useCallback(() => {
+    if (!config.enableCelebration) return;
+
     const canvas = confettiRef.current;
     if (!canvas) return;
 
@@ -358,7 +377,7 @@ const BingoApp = () => {
       if (animationId) cancelAnimationFrame(animationId);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }, 5000);
-  };
+  }, [config.enableCelebration]);
 
   const getModeName = (mode) => {
     const names = {
@@ -371,6 +390,14 @@ const BingoApp = () => {
   };
 
   // Display View - Casino Style
+
+  if (!configLoaded || !config) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="text-white text-2xl">Loading configuration...</div>
+      </div>
+    );
+  }
   if (view === 'display') {
     return (
       <div className="min-h-screen bg-black text-white p-8 relative overflow-hidden">

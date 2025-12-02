@@ -1,7 +1,9 @@
+import os
 from typing import List
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from logic.cards import generate_75_ball_card, serialize_card, short_id
 from logic.draws import DrawEngine
 from logic.validate import validate_card
@@ -17,16 +19,51 @@ from storage.db import db
 
 app = FastAPI()
 
+
+# Configuration from environment variables
+def get_cors_origins() -> List[str]:
+    """Get CORS origins from environment variable."""
+    origins_str = os.getenv("CORS_ORIGINS", "*")
+    if origins_str == "*":
+        return ["*"]
+    return [origin.strip() for origin in origins_str.split(",")]
+
+
+def get_bool_env(key: str, default: bool = True) -> bool:
+    """Get boolean from environment variable."""
+    value = os.getenv(key, str(default)).lower()
+    return value in ("true", "1", "yes", "on")
+
+
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*"
-    ],  # or restrict to ["http://localhost:5173"] for your Vite dev server
-    allow_credentials=True,
+    allow_origins=get_cors_origins(),
+    allow_credentials=get_bool_env("CORS_ALLOW_CREDENTIALS", True),
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# -------------------------
+# Configuration endpoint
+# -------------------------
+
+
+@app.get("/api/config")
+def get_config():
+    """Return frontend configuration."""
+    return {
+        "apiBaseUrl": os.getenv("API_BASE_URL", "http://localhost:8000"),
+        "wsBaseUrl": os.getenv("WS_BASE_URL", "ws://localhost:8000"),
+        "pollInterval": int(os.getenv("WS_POLL_INTERVAL", "20000")),
+        "reconnectDelay": int(os.getenv("WS_RECONNECT_DELAY", "3000")),
+        "cardFetchInterval": int(os.getenv("CARD_FETCH_INTERVAL", "300000")),
+        "defaultCardCount": int(os.getenv("DEFAULT_CARD_COUNT", "50")),
+        "enableCelebration": get_bool_env("ENABLE_CELEBRATION", True),
+        "confettiDuration": int(os.getenv("CONFETTI_DURATION", "5000")),
+        "gameIdDefault": os.getenv("GAME_ID_DEFAULT", "demo"),
+    }
 
 
 # -------------------------
