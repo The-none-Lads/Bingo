@@ -7,20 +7,20 @@ metadata:
   annotations:
     # Adjust these based on your ingress controller
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    
+
     # WebSocket support
     nginx.ingress.kubernetes.io/websocket-services: "backend"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    
+
     # CORS headers (backup, backend also handles this)
     nginx.ingress.kubernetes.io/enable-cors: "true"
     nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
     nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
-    
+
     # Rewrite rules to handle /api prefix
     nginx.ingress.kubernetes.io/rewrite-target: /$2
-    
+
 spec:
   ingressClassName: nginx
   tls:
@@ -39,7 +39,7 @@ spec:
                 name: backend
                 port:
                   number: 8000
-          
+
           # WebSocket route
           - path: /ws
             pathType: Prefix
@@ -48,7 +48,7 @@ spec:
                 name: backend
                 port:
                   number: 8000
-          
+
           # Frontend (catch-all for SPA)
           - path: /
             pathType: Prefix

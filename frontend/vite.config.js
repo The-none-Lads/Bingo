@@ -7,4 +7,13 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8000',
+      '/games': 'http://localhost:8000',
+      '/cards': 'http://localhost:8000',
+      '/validate': 'http://localhost:8000'
+    }
+  }
 })
+

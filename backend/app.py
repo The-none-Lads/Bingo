@@ -3,7 +3,6 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from logic.cards import generate_75_ball_card, serialize_card, short_id
 from logic.draws import DrawEngine
 from logic.validate import validate_card
@@ -43,27 +42,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# -------------------------
-# Configuration endpoint
-# -------------------------
-
-
-@app.get("/api/config")
-def get_config():
-    """Return frontend configuration."""
-    return {
-        "apiBaseUrl": os.getenv("API_BASE_URL", "http://localhost:8000"),
-        "wsBaseUrl": os.getenv("WS_BASE_URL", "ws://localhost:8000"),
-        "pollInterval": int(os.getenv("WS_POLL_INTERVAL", "20000")),
-        "reconnectDelay": int(os.getenv("WS_RECONNECT_DELAY", "3000")),
-        "cardFetchInterval": int(os.getenv("CARD_FETCH_INTERVAL", "300000")),
-        "defaultCardCount": int(os.getenv("DEFAULT_CARD_COUNT", "50")),
-        "enableCelebration": get_bool_env("ENABLE_CELEBRATION", True),
-        "confettiDuration": int(os.getenv("CONFETTI_DURATION", "5000")),
-        "gameIdDefault": os.getenv("GAME_ID_DEFAULT", "demo"),
-    }
 
 
 # -------------------------

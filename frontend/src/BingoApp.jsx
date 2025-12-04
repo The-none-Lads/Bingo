@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
-import { getConfig } from './config';
+import {config} from './config';
 
 // Helper function to get letter and color for a number
 const getBingoLetter = (num) => {
@@ -64,22 +64,19 @@ const BingoApp = () => {
   const lastUpdateRef = useRef(0);
   const pollIntervalRef = useRef(null);
   const cardIntervalRef = useRef(null);
-  const [config, setConfig] = useState(null);
-  const [configLoaded, setConfigLoaded] = useState(false);
+  //const [config, setConfig] = useState(null);
+  //const [configLoaded, setConfigLoaded] = useState(false);
 
   useEffect(() => {
-    getConfig().then(cfg => {
-      setConfig(cfg);
-      setConfigLoaded(true);
       // Set default game ID from config if not in localStorage
       const storedGameId = localStorage.getItem('bingo_game_id');
       if (!storedGameId) {
-        setGameId(cfg.gameIdDefault || 'demo');
+        setGameId('demo');
       }
-    });
-  }, []);
+    }, []);
 
-
+  // Continue rendering hooks even if config isn't loaded; use safe defaults below.
+  
   const API_BASE = config.apiBaseUrl;
   const WS_BASE = config.wsBaseUrl;
   const POLL_INTERVAL = config.pollInterval;
@@ -87,8 +84,10 @@ const BingoApp = () => {
 
   // Function to fetch all cards for the current game
   const fetchCardsForGame = useCallback(async () => {
+    // Use safe defaults so hooks can be declared unconditionally
+    const API_BASE = config?.apiBaseUrl || '';
     try {
-      const response = await fetch(`${API_BASE}/games/${gameId}/cards`);
+      const response = await fetch(`/games/${gameId}/cards`);
       if (response.ok) {
         const data = await response.json();
         if (data.cards && data.cards.length > 0) {
@@ -98,7 +97,7 @@ const BingoApp = () => {
     } catch (err) {
       console.error('Failed to fetch cards:', err);
     }
-  }, [gameId, API_BASE]);
+  }, [gameId]);
 
   // Function to update game state (used by both WS and polling)
   const updateGameState = useCallback((data, source = 'unknown') => {
@@ -124,7 +123,7 @@ const BingoApp = () => {
   // Function to fetch game state
   const fetchGameState = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/games/${gameId}/state`);
+      const response = await fetch(`/games/${gameId}/state`);
       if (response.ok) {
         const data = await response.json();
         const now = Date.now();
@@ -143,9 +142,58 @@ const BingoApp = () => {
     fetchCardsForGame();
   }, [gameId, fetchCardsForGame]);
 
+  // Confetti Animation before it gets called because for some reason I broke it by changing something else so now it is here :(
+const launchConfetti = useCallback(() => {
+    if (!config.enableCelebration) return;
+
+    const canvas = confettiRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const pieces = Array.from({ length: 150 }, () => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height - canvas.height,
+      size: Math.random() * 8 + 4,
+      color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+      speed: Math.random() * 4 + 2,
+      rotation: Math.random() * 360,
+      rotationSpeed: Math.random() * 6 - 3
+    }));
+
+    let animationId;
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      pieces.forEach(p => {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate((p.rotation * Math.PI) / 180);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+        ctx.restore();
+
+        p.y += p.speed;
+        p.rotation += p.rotationSpeed;
+        if (p.y > canvas.height) {
+          p.y = -10;
+          p.x = Math.random() * canvas.width;
+        }
+      });
+      animationId = requestAnimationFrame(draw);
+    };
+
+    draw();
+    setTimeout(() => {
+      if (animationId) cancelAnimationFrame(animationId);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }, 5000);
+  }, []);
+
   // WebSocket connection
   useEffect(() => {
-    const ws = new WebSocket(`${WS_BASE}/ws/${gameId}`);
+    const ws = new WebSocket(`${WS_BASE}/${gameId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -186,7 +234,7 @@ const BingoApp = () => {
         wsRef.current.close();
       }
     };
-  }, [gameId, WS_BASE]);
+  }, [gameId, WS_BASE, launchConfetti]);
 
   // Polling as fallback
   useEffect(() => {
@@ -199,7 +247,7 @@ const BingoApp = () => {
       // After polling, check if WS is closed and try reconnect
       if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
         console.log("🔄 Attempting reconnect after poll...");
-        const ws = new WebSocket(`ws://localhost:8000/ws/${gameId}`);
+        const ws = new WebSocket(`wss://localhost:8000/ws/${gameId}`);
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -252,7 +300,7 @@ const BingoApp = () => {
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
-      await fetch(`${API_BASE}/games/${gameId}/start`, {
+      await fetch(`/games/${gameId}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, ball_set: 75, stage })
@@ -268,7 +316,7 @@ const BingoApp = () => {
 
   const drawNumber = async () => {
     try {
-      await fetch(`${API_BASE}/games/${gameId}/draw`, { method: 'POST' });
+      await fetch(`/games/${gameId}/draw`, { method: 'POST' });
       // Force immediate update
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
@@ -280,7 +328,7 @@ const BingoApp = () => {
 
   const setStage = async (stage) => {
     try {
-      await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { method: 'POST' });
+      await fetch(`/games/${gameId}/stage/${stage}`, { method: 'POST' });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
       }
@@ -291,7 +339,7 @@ const BingoApp = () => {
 
   const generateCards = async (count = 50) => {
     try {
-      const res = await fetch(`${API_BASE}/cards/batch`, {
+      const res = await fetch(`/cards/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ count, game_id: gameId })
@@ -313,7 +361,7 @@ const BingoApp = () => {
     if (!cardToValidate.trim()) return;
 
     try {
-      const res = await fetch(`${API_BASE}/validate`, {
+      const res = await fetch(`/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ game_id: gameId, serial: cardToValidate.trim() })
@@ -331,53 +379,6 @@ const BingoApp = () => {
     }
   };
 
-  const launchConfetti = useCallback(() => {
-    if (!config.enableCelebration) return;
-
-    const canvas = confettiRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-
-    const pieces = Array.from({ length: 150 }, () => ({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height - canvas.height,
-      size: Math.random() * 8 + 4,
-      color: `hsl(${Math.random() * 360}, 100%, 50%)`,
-      speed: Math.random() * 4 + 2,
-      rotation: Math.random() * 360,
-      rotationSpeed: Math.random() * 6 - 3
-    }));
-
-    let animationId;
-    const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      pieces.forEach(p => {
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate((p.rotation * Math.PI) / 180);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
-        ctx.restore();
-
-        p.y += p.speed;
-        p.rotation += p.rotationSpeed;
-        if (p.y > canvas.height) {
-          p.y = -10;
-          p.x = Math.random() * canvas.width;
-        }
-      });
-      animationId = requestAnimationFrame(draw);
-    };
-
-    draw();
-    setTimeout(() => {
-      if (animationId) cancelAnimationFrame(animationId);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }, 5000);
-  }, [config.enableCelebration]);
 
   const getModeName = (mode) => {
     const names = {
@@ -391,13 +392,6 @@ const BingoApp = () => {
 
   // Display View - Casino Style
 
-  if (!configLoaded || !config) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
-        <div className="text-white text-2xl">Loading configuration...</div>
-      </div>
-    );
-  }
   if (view === 'display') {
     return (
       <div className="min-h-screen bg-black text-white p-8 relative overflow-hidden">

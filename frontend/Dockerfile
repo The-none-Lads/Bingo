@@ -2,11 +2,9 @@
 FROM node:25-alpine3.22 AS build
 WORKDIR /app
 
-# Install dependencies
 COPY frontend/package*.json ./
 RUN npm install
 
-# Build the app
 COPY frontend/ .
 RUN npm run build
 
@@ -14,11 +12,14 @@ RUN npm run build
 FROM nginx:alpine
 WORKDIR /usr/share/nginx/html
 
-# Copy build output from previous stage
+# Copy build output
 COPY --from=build /app/dist ./
 
-# Expose port 80
+# Copy entrypoint script
+COPY frontend/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 80
 
-# Default Nginx command
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
