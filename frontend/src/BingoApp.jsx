@@ -247,7 +247,7 @@ const launchConfetti = useCallback(() => {
       // After polling, check if WS is closed and try reconnect
       if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
         console.log("🔄 Attempting reconnect after poll...");
-        const ws = new WebSocket(`wss://localhost:8000/ws/${gameId}`);
+        const ws = new WebSocket(`${config.wsBaseUrl}/ws/${gameId}`);
         wsRef.current = ws;
 
         ws.onopen = () => {
