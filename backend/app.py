@@ -22,7 +22,7 @@ app = FastAPI()
 # Configuration from environment variables
 def get_cors_origins() -> List[str]:
     """Get CORS origins from environment variable."""
-    origins_str = os.getenv("CORS_ORIGINS", "*")
+    origins_str = os.getenv("CORS_ORIGINS")
     if origins_str == "*":
         return ["*"]
     return [origin.strip() for origin in origins_str.split(",")]
