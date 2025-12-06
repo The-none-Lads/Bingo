@@ -23,9 +23,13 @@ app = FastAPI()
 def get_cors_origins() -> List[str]:
     """Get CORS origins from environment variable."""
     origins_str = os.getenv("CORS_ORIGINS")
-    if origins_str == "*":
+    if origins_str is None:
+        raise RuntimeError("CORS_ORIGINS must be set")
+
+    if origins_str.strip() == "*":
         return ["*"]
-    return [origin.strip() for origin in origins_str.split(",")]
+
+    return [origin.strip() for origin in origins_str.split(",") if origin.strip()]
 
 
 def get_bool_env(key: str, default: bool = True) -> bool:
