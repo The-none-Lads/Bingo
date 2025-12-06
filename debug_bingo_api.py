@@ -1,14 +1,17 @@
-import requests
 import json
+
+import requests
 
 BASE = "http://localhost:8000"
 GAME_ID = "testgame"
+
 
 def pretty(obj):
     try:
         print(json.dumps(obj, indent=2))
     except Exception:
         print(obj)
+
 
 def debug_request(method, url, **kwargs):
     print(f"\n➡️ {method} {url}")
@@ -25,15 +28,16 @@ def debug_request(method, url, **kwargs):
         print("Raw response:", res.text)
         return None
 
+
 def main():
     print("=== DEBUG BINGO API TEST ===")
 
     # 1. Start a game
-    start = debug_request("POST", f"{BASE}/games/{GAME_ID}/start", json={
-        "mode": "progressive_rows",
-        "ball_set": 75,
-        "stage": 1
-    })
+    debug_request(
+        "POST",
+        f"{BASE}/games/{GAME_ID}/start",
+        json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
+    )
 
     # 2. Draw 5 numbers
     for i in range(5):
@@ -43,7 +47,9 @@ def main():
     debug_request("GET", f"{BASE}/games/{GAME_ID}/state")
 
     # 4. Generate 3 cards
-    cards_resp = debug_request("POST", f"{BASE}/cards/batch", json={"count": 3, "game_id": GAME_ID})
+    cards_resp = debug_request(
+        "POST", f"{BASE}/cards/batch", json={"count": 3, "game_id": GAME_ID}
+    )
     if not cards_resp or "cards" not in cards_resp:
         print("❌ Could not generate cards, aborting.")
         return
@@ -54,14 +60,19 @@ def main():
     debug_request("GET", f"{BASE}/cards/{public_id}")
 
     # 6. Validate that card
-    debug_request("POST", f"{BASE}/validate", json={"game_id": GAME_ID, "serial": public_id})
+    debug_request(
+        "POST", f"{BASE}/validate", json={"game_id": GAME_ID, "serial": public_id}
+    )
 
     # 7. Try invalid card
     bad_id = "BADCODE1"
     debug_request("GET", f"{BASE}/cards/{bad_id}")
-    debug_request("POST", f"{BASE}/validate", json={"game_id": GAME_ID, "serial": bad_id})
+    debug_request(
+        "POST", f"{BASE}/validate", json={"game_id": GAME_ID, "serial": bad_id}
+    )
 
     print("\n=== DEBUG RUN COMPLETE ===")
+
 
 if __name__ == "__main__":
     main()

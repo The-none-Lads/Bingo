@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format clean run
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format clean run backend frontend run-prod
 
 help:
 	@echo "Bingo Application - Available Commands:"
@@ -23,7 +23,7 @@ install-dev:
 	pip install -r backend/requirements-dev.txt
 
 test:
-	cd backend && pytest tests/ -v
+	pytest --cov=backend --cov-report=term-missing -v
 
 test-unit:
 	cd backend && pytest tests/ -v -m unit
@@ -37,13 +37,18 @@ test-coverage:
 	@echo "Coverage report generated in backend/htmlcov/index.html"
 
 lint:
-	flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
-	flake8 backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-	mypy backend --ignore-missing-imports || true
+	-flake8 .
+	-black --check .
+	-isort --check-only .
+	-mypy . --check-untyped-defs
+	-cd frontend && npx eslint . --ext .js,.jsx,.ts,.tsx
+	-cd frontend && npx stylelint "**/*.{css,scss}"
+	-cd frontend && npx htmlhint "frontend/**/*.html"
+	-yamllint . --config-file .yamllint
 
 format:
-	black backend/
-	isort backend/
+	black .
+	isort .
 
 format-check:
 	black --check backend/
@@ -57,8 +62,10 @@ clean:
 	find . -type f -name ".coverage" -delete
 	find . -type f -name "coverage.xml" -delete
 
-run:
+backend:
 	cd backend && uvicorn app:app --reload --host 0.0.0.0 --port 8000
 
-run-prod:
-	cd backend && uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
+frontend:
+	cd frontend && npm run dev
+
+run: backend frontend

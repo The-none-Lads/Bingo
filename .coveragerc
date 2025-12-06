@@ -1,0 +1,10 @@
+[run]
+source =
+    backend/app.py
+    backend/models.py
+    backend/logic
+    backend/storage
+
+[report]
+omit =
+    */tests/*

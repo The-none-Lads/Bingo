@@ -1,5 +1,17 @@
 # Python
+.__pycache__/
 __pycache__/
+__pycache__
+.__pycache__/*
+__pycache__/*
+__pycache__*
+**/.__pycache__/
+**/__pycache__/
+**/__pycache__
+**/.__pycache__/*
+**/__pycache__/*
+**/__pycache__*
+*.pyc
 *.py[cod]
 *.so
 .venv/
@@ -8,11 +20,14 @@ env/
 .mypy_cache/
 .pytest_cache/
 .coverage
+.coverage.xml
 coverage.xml
 htmlcov/
 
 # Node / Frontend
 node_modules/
+.node_modules/
+node_modules
 dist/
 build/
 .cache/

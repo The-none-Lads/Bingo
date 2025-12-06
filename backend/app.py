@@ -1,27 +1,44 @@
+import os
+from typing import List
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
-from logic.draws import DrawEngine
 from logic.cards import generate_75_ball_card, serialize_card, short_id
+from logic.draws import DrawEngine
 from logic.validate import validate_card
-from storage.db import db
 from models import (
-    CreateGameRequest,
     CardBatchRequest,
-    ValidateRequest,
-    GameStateResponse,
     CardResponse,
+    CreateGameRequest,
+    GameStateResponse,
+    ValidateRequest,
     ValidateResponse,
 )
-
+from storage.db import db
 
 app = FastAPI()
+
+
+# Configuration from environment variables
+def get_cors_origins() -> List[str]:
+    """Get CORS origins from environment variable."""
+    origins_str = os.getenv("CORS_ORIGINS", "*")
+    if origins_str == "*":
+        return ["*"]
+    return [origin.strip() for origin in origins_str.split(",")]
+
+
+def get_bool_env(key: str, default: bool = True) -> bool:
+    """Get boolean from environment variable."""
+    value = os.getenv(key, str(default)).lower()
+    return value in ("true", "1", "yes", "on")
+
 
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or restrict to ["http://localhost:5173"] for your Vite dev server
-    allow_credentials=True,
+    allow_origins=get_cors_origins(),
+    allow_credentials=get_bool_env("CORS_ALLOW_CREDENTIALS", True),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -32,6 +49,7 @@ app.add_middleware(
 # -------------------------
 
 connections: List[WebSocket] = []
+
 
 class ConnectionManager:
     def __init__(self):
@@ -56,17 +74,20 @@ class ConnectionManager:
             except Exception:
                 self.disconnect(game_id, ws)
 
+
 manager = ConnectionManager()
+
 
 @app.websocket("/ws/{game_id}")
 async def websocket_endpoint(websocket: WebSocket, game_id: str):
     await manager.connect(game_id, websocket)
     try:
         while True:
-            # optional: receive messages from client
             await websocket.receive_text()
+            # optionally ignore or log
     except WebSocketDisconnect:
         manager.disconnect(game_id, websocket)
+
 
 async def broadcast_game_state(game_id: str):
     game = db.games.get(game_id)
@@ -91,12 +112,11 @@ async def start_game(game_id: str, req: CreateGameRequest):
         "mode": req.mode,
         "stage": req.stage,
         "ball_set": req.ball_set,
-        "status": "active"
+        "status": "active",
     }
     # broadcast new state
     await broadcast_game_state(game_id)
-    return {"message": f"Game {game_id} started", "config": req.dict()}
-
+    return {"message": f"Game {game_id} started", "config": req.model_dump()}
 
 
 @app.post("/games/{game_id}/stage/{required_rows}")
@@ -107,7 +127,6 @@ async def set_stage(game_id: str, required_rows: int):
     game["stage"] = required_rows
     await broadcast_game_state(game_id)
     return {"game_id": game_id, "stage": required_rows}
-
 
 
 @app.post("/games/{game_id}/draw")
@@ -125,7 +144,6 @@ async def draw_number(game_id: str):
     return {"drawn_number": num, "all_drawn": game["drawn"]}
 
 
-
 @app.get("/games/{game_id}/state", response_model=GameStateResponse)
 def game_state(game_id: str):
     game = db.games.get(game_id)
@@ -136,13 +154,14 @@ def game_state(game_id: str):
         "drawn": game["drawn"],
         "mode": game["mode"],
         "stage": game["stage"],
-        "status": game["status"]
+        "status": game["status"],
     }
 
 
 # -------------------------
 # Card endpoints
 # -------------------------
+
 
 @app.post("/cards/batch")
 async def generate_cards(req: CardBatchRequest):
@@ -151,39 +170,46 @@ async def generate_cards(req: CardBatchRequest):
         grid = generate_75_ball_card()
         serial = serialize_card(grid)
         public_id = short_id(serial)
-        db.cards[public_id] = {
-            "grid": grid,
-            "serial": serial,
-            "game_id": req.game_id
-        }
+        db.cards[public_id] = {"grid": grid, "serial": serial, "game_id": req.game_id}
         cards.append({"public_id": public_id, "serial": serial, "grid": grid})
     # optional: broadcast updated state
     await broadcast_game_state(req.game_id)
     return {"count": len(cards), "cards": cards}
 
 
-
 @app.get("/cards/{public_id}", response_model=CardResponse)
 def get_card(public_id: str):
     card = db.cards.get(public_id)
     if not card:
-        return {
-            "exists": False,
-            "public_id": public_id,
-            "serial": "",
-            "grid": []
-        }
+        return {"exists": False, "public_id": public_id, "serial": "", "grid": []}
     return {
         "exists": True,
         "public_id": public_id,
         "serial": card["serial"],
-        "grid": card["grid"]
+        "grid": card["grid"],
     }
+
+
+@app.get("/games/{game_id}/cards")
+def get_game_cards(game_id: str):
+    """Get all cards for a specific game"""
+    game_cards = []
+    for public_id, card_data in db.cards.items():
+        if card_data.get("game_id") == game_id:
+            game_cards.append(
+                {
+                    "public_id": public_id,
+                    "serial": card_data["serial"],
+                    "grid": card_data["grid"],
+                }
+            )
+    return {"count": len(game_cards), "cards": game_cards}
 
 
 # -------------------------
 # Validation endpoint
 # -------------------------
+
 
 @app.post("/validate", response_model=ValidateResponse)
 async def validate(req: ValidateRequest):
@@ -198,23 +224,22 @@ async def validate(req: ValidateRequest):
             "details": {"error": "Card does not exist"},
             "drawn": game["drawn"],
             "grid": [],
-            "public_id": req.serial
+            "public_id": req.serial,
         }
 
     valid, details = validate_card(game, card)
 
     # if valid, broadcast a celebration event
     if valid:
-        await manager.broadcast(req.game_id, {
-            "type": "celebration",
-            "card_id": req.serial,
-            "details": details
-        })
+        await manager.broadcast(
+            req.game_id,
+            {"type": "celebration", "card_id": req.serial, "details": details},
+        )
 
     return {
         "valid": valid,
         "details": details,
         "drawn": game["drawn"],
         "grid": card["grid"],
-        "public_id": req.serial
+        "public_id": req.serial,
     }

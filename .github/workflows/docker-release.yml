@@ -1,0 +1,68 @@
+name: Build and Publish Backend + Frontend Images
+
+on:
+  push:
+    tags:
+      - "v*"     # release tags like v1.3.5
+      - "dev"    # special rolling dev tag
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image names
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
+            echo "BACKEND_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-backend:dev" >> $GITHUB_ENV
+            echo "FRONTEND_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-frontend:dev" >> $GITHUB_ENV
+          else
+            echo "BACKEND_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-backend:${GITHUB_REF_NAME}" >> $GITHUB_ENV
+            echo "FRONTEND_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-frontend:${GITHUB_REF_NAME}" >> $GITHUB_ENV
+            # also push latest for releases
+            echo "BACKEND_IMAGE_LATEST=ghcr.io/${GITHUB_REPOSITORY,,}-backend:latest" >> $GITHUB_ENV
+            echo "FRONTEND_IMAGE_LATEST=ghcr.io/${GITHUB_REPOSITORY,,}-frontend:latest" >> $GITHUB_ENV
+          fi
+
+      - name: Build backend Docker image
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
+            docker build -f backend/Dockerfile -t $BACKEND_IMAGE .
+          else
+            docker build -f backend/Dockerfile -t $BACKEND_IMAGE -t $BACKEND_IMAGE_LATEST .
+          fi
+
+      - name: Push backend Docker image
+        run: |
+          docker push $BACKEND_IMAGE
+          if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
+            docker push $BACKEND_IMAGE_LATEST
+          fi
+
+      - name: Build frontend Docker image
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
+            docker build -f frontend/Dockerfile -t $FRONTEND_IMAGE .
+          else
+            docker build -f frontend/Dockerfile -t $FRONTEND_IMAGE -t $FRONTEND_IMAGE_LATEST .
+          fi
+
+      - name: Push frontend Docker image
+        run: |
+          docker push $FRONTEND_IMAGE
+          if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
+            docker push $FRONTEND_IMAGE_LATEST
+          fi

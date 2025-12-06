@@ -1,6 +1,7 @@
 import secrets
 from typing import List
 
+
 class DrawEngine:
     def __init__(self, max_number: int = 75):
         self.max_number = max_number

@@ -1,11 +1,54 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
+import {config} from './config';
 
-const API_BASE = 'http://localhost:8000';
+// Helper function to get letter and color for a number
+const getBingoLetter = (num) => {
+  if (num >= 1 && num <= 15) return { letter: 'B', color: 'bg-red-500' };
+  if (num >= 16 && num <= 30) return { letter: 'I', color: 'bg-blue-500' };
+  if (num >= 31 && num <= 45) return { letter: 'N', color: 'bg-yellow-500' };
+  if (num >= 46 && num <= 60) return { letter: 'G', color: 'bg-green-500' };
+  if (num >= 61 && num <= 75) return { letter: 'O', color: 'bg-purple-500' };
+  return { letter: '', color: 'bg-gray-500' };
+};
+
+// Animated Bingo Ball Component
+const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
+  const { letter, color } = getBingoLetter(number);
+
+  const sizeClasses = {
+    small: 'w-12 h-12 text-sm',
+    medium: 'w-20 h-20 text-xl',
+    large: 'w-32 h-32 text-4xl',
+    xlarge: 'w-48 h-48 text-6xl'
+  };
+  const letterSizeClasses = {
+    small: 'text-base',
+    medium: 'text-xl',
+    large: 'text-3xl',
+    xlarge: 'text-5xl',
+  };
+
+  return (
+    <div
+      className={`${sizeClasses[size]} ${color} rounded-full flex flex-col items-center justify-center text-white font-bold shadow-2xl border-4 border-white/30 ${isAnimating ? 'animate-bounce' : ''}`}
+    >
+      <div
+        className={`${letterSizeClasses[size]} opacity-90 font-serif`}
+        style={{ fontFamily: '"Georgia", "Times New Roman", serif' }}
+      >
+        {letter}
+      </div>
+      <div>{number}</div>
+    </div>
+  );
+};
 
 const BingoApp = () => {
   const [view, setView] = useState('display');
-  const [gameId, setGameId] = useState('demo');
+  const [gameId, setGameId] = useState(() => {
+    return localStorage.getItem('bingo_game_id') || 'demo';
+  });
   const [gameState, setGameState] = useState(null);
   const [lastDrawn, setLastDrawn] = useState(null);
   const [validationResult, setValidationResult] = useState(null);
@@ -15,168 +58,101 @@ const BingoApp = () => {
   const confettiRef = useRef(null);
   const [customCount, setCustomCount] = useState(10);
   const [openCard, setOpenCard] = useState(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef(null);
+  const lastUpdateRef = useRef(0);
+  const pollIntervalRef = useRef(null);
+  const cardIntervalRef = useRef(null);
+  //const [config, setConfig] = useState(null);
+  //const [configLoaded, setConfigLoaded] = useState(false);
 
-  // WebSocket connection for real-time updates
   useEffect(() => {
-    console.log('🔌 Setting up WebSocket for game:', gameId);
-    
-    const ws = new WebSocket(`ws://localhost:8000/ws/${gameId}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('✅ WebSocket connected to game:', gameId);
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('📨 WebSocket message received:', data);
-        
-        if (data.type === "state_update" && data.state) {
-          const prevLength = gameState?.drawn?.length || 0;
-          const newLength = data.state.drawn?.length || 0;
-          
-          // Update last drawn if new number was added
-          if (newLength > prevLength && data.state.drawn.length > 0) {
-            const newNum = data.state.drawn[data.state.drawn.length - 1];
-            console.log('🎱 New number drawn:', newNum);
-            setLastDrawn(newNum);
-            setTimeout(() => setLastDrawn(null), 3000);
-          }
-          
-          setGameState(data.state);
-        }
-        
-        if (data.type === "celebration") {
-          console.log('🎉 Celebration triggered!');
-          setCelebrating(true);
-          launchConfetti();
-          setTimeout(() => setCelebrating(false), 5000);
-        }
-      } catch (err) {
-        console.error('❌ WebSocket message error:', err);
+      // Set default game ID from config if not in localStorage
+      const storedGameId = localStorage.getItem('bingo_game_id');
+      if (!storedGameId) {
+        setGameId('demo');
       }
-    };
+    }, []);
 
-    ws.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
-    };
+  // Continue rendering hooks even if config isn't loaded; use safe defaults below.
+  
+  const API_BASE = config.apiBaseUrl;
+  const WS_BASE = config.wsBaseUrl;
+  const POLL_INTERVAL = config.pollInterval;
+  const CARD_FETCH_INTERVAL = config.cardFetchInterval;
 
-    ws.onclose = () => {
-      console.log('🔌 WebSocket disconnected from game:', gameId);
-    };
-
-    return () => {
-      console.log('🧹 Cleaning up WebSocket connection');
-      if (wsRef.current) {
-        wsRef.current.close();
+  // Function to fetch all cards for the current game
+  const fetchCardsForGame = useCallback(async () => {
+    // Use safe defaults so hooks can be declared unconditionally
+    const API_BASE = config?.apiBaseUrl || '';
+    try {
+      const response = await fetch(`/games/${gameId}/cards`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.cards && data.cards.length > 0) {
+          setGeneratedCards(data.cards);
+        }
       }
-    };
+    } catch (err) {
+      console.error('Failed to fetch cards:', err);
+    }
   }, [gameId]);
 
-  const startGame = async (mode = 'progressive_rows', stage = 1) => {
+  // Function to update game state (used by both WS and polling)
+  const updateGameState = useCallback((data, source = 'unknown') => {
+    if (!data) return;
+
+    const prevLength = gameState?.drawn?.length || 0;
+    const newLength = data.drawn?.length || 0;
+
+    if (newLength > prevLength && data.drawn && data.drawn.length > 0) {
+      const newNum = data.drawn[data.drawn.length - 1];
+      setLastDrawn(newNum);
+      setIsDrawing(true);
+      setTimeout(() => setIsDrawing(false), 2000);
+    }
+
+    setGameState(data);
+
+    if (source === 'websocket') {
+      lastUpdateRef.current = Date.now();
+    }
+  }, [gameState]);
+
+  // Function to fetch game state
+  const fetchGameState = useCallback(async () => {
     try {
-      console.log('▶️ Starting game:', { gameId, mode, stage });
-      const response = await fetch(`${API_BASE}/games/${gameId}/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode, ball_set: 75, stage })
-      });
-      
+      const response = await fetch(`/games/${gameId}/state`);
       if (response.ok) {
         const data = await response.json();
-        console.log('✅ Game started:', data);
+        const now = Date.now();
+        if (!wsConnected || now - lastUpdateRef.current > 1000) {
+          updateGameState(data, 'poll');
+        }
       }
     } catch (err) {
-      console.error('❌ Failed to start game:', err);
+      console.error('Failed to fetch game state:', err);
     }
-  };
+  }, [gameId, wsConnected, updateGameState, API_BASE]);
 
-  const drawNumber = async () => {
-    try {
-      console.log('🎲 Drawing number for game:', gameId);
-      const response = await fetch(`${API_BASE}/games/${gameId}/draw`, { 
-        method: 'POST' 
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ Number drawn:', data);
-      }
-    } catch (err) {
-      console.error('❌ Failed to draw number:', err);
-    }
-  };
+  // Save gameId to localStorage when it changes and fetch cards
+  useEffect(() => {
+    localStorage.setItem('bingo_game_id', gameId);
+    fetchCardsForGame();
+  }, [gameId, fetchCardsForGame]);
 
-  const setStage = async (stage) => {
-    try {
-      console.log('📊 Setting stage to:', stage);
-      const response = await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { 
-        method: 'POST' 
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ Stage set:', data);
-      }
-    } catch (err) {
-      console.error('❌ Failed to set stage:', err);
-    }
-  };
+  // Confetti Animation before it gets called because for some reason I broke it by changing something else so now it is here :(
+const launchConfetti = useCallback(() => {
+    if (!config.enableCelebration) return;
 
-  const generateCards = async (count = 50) => {
-    try {
-      const res = await fetch(`${API_BASE}/cards/batch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count, game_id: gameId })
-      });
-      const data = await res.json();
-      setGeneratedCards(data.cards);
-      console.log(`✅ Generated ${data.cards.length} cards`);
-    } catch (err) {
-      console.error('❌ Failed to generate cards:', err);
-    }
-  };
-
-  const validateCard = async () => {
-    if (!cardToValidate.trim()) return;
-    
-    try {
-      const res = await fetch(`${API_BASE}/validate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ game_id: gameId, serial: cardToValidate.trim() })
-      });
-      const data = await res.json();
-      setValidationResult(data);
-      
-      console.log('🔍 Validation result:', data);
-      
-      if (data.valid) {
-        console.log('🎉 BINGO! Valid card!');
-        setCelebrating(true);
-        launchConfetti();
-        setTimeout(() => setCelebrating(false), 5000);
-      }
-    } catch (err) {
-      console.error('❌ Failed to validate card:', err);
-    }
-  };
-
-  const launchConfetti = () => {
-    console.log('🎊 Launching confetti!');
     const canvas = confettiRef.current;
-    if (!canvas) {
-      console.error('❌ Confetti canvas not found');
-      return;
-    }
-    
+    if (!canvas) return;
+
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    
+
     const pieces = Array.from({ length: 150 }, () => ({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height - canvas.height,
@@ -197,7 +173,7 @@ const BingoApp = () => {
         ctx.fillStyle = p.color;
         ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
         ctx.restore();
-        
+
         p.y += p.speed;
         p.rotation += p.rotationSpeed;
         if (p.y > canvas.height) {
@@ -207,16 +183,202 @@ const BingoApp = () => {
       });
       animationId = requestAnimationFrame(draw);
     };
-    
+
     draw();
     setTimeout(() => {
-      if (animationId) {
-        cancelAnimationFrame(animationId);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        console.log('🛑 Confetti animation stopped');
-      }
+      if (animationId) cancelAnimationFrame(animationId);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
     }, 5000);
+  }, []);
+
+  // WebSocket connection
+  useEffect(() => {
+    const ws = new WebSocket(`${config.wsBaseUrl}/${gameId}`);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('✅ WebSocket connected');
+      setWsConnected(true);
+    };
+
+    ws.onclose = () => {
+      console.log('❌ WebSocket disconnected');
+      setWsConnected(false);
+    };
+
+    ws.onerror = () => {
+      console.log('⚠️ WebSocket error');
+      setWsConnected(false);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data && data.type === "state_update" && data.state) {
+          updateGameState(data.state, 'websocket');
+        }
+
+        if (data && data.type === "celebration") {
+          setCelebrating(true);
+          launchConfetti();
+          setTimeout(() => setCelebrating(false), 5000);
+        }
+      } catch (err) {
+        console.error('WebSocket message error:', err);
+      }
+    };
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [gameId, WS_BASE, launchConfetti]);
+
+  // Polling as fallback
+  useEffect(() => {
+    if (wsConnected) return; // skip polling if WS is active
+
+    // Set up polling interval
+    pollIntervalRef.current = setInterval(async () => {
+      await fetchGameState();
+
+      // After polling, check if WS is closed and try reconnect
+      if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+        console.log("🔄 Attempting reconnect after poll...");
+        const ws = new WebSocket(`${config.wsBaseUrl}/ws/${gameId}`);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          console.log("✅ WebSocket reconnected");
+          setWsConnected(true);
+        };
+        ws.onclose = () => setWsConnected(false);
+        ws.onerror = () => setWsConnected(false);
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data?.type === "state_update" && data.state) {
+              updateGameState(data.state, "websocket");
+            }
+            if (data?.type === "celebration") {
+              setCelebrating(true);
+              launchConfetti();
+              setTimeout(() => setCelebrating(false), 5000);
+            }
+          } catch (err) {
+            console.error("WebSocket message error:", err);
+          }
+        };
+      }
+    }, POLL_INTERVAL);
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, [gameId, wsConnected, fetchGameState, updateGameState, POLL_INTERVAL, launchConfetti]);
+
+
+  // update cards on page load and after 1 minute
+  useEffect(() => {
+
+    // Set up polling interval
+    cardIntervalRef.current = setInterval(() => {
+      fetchCardsForGame();
+    }, CARD_FETCH_INTERVAL);
+
+    return () => {
+      if (cardIntervalRef.current) {
+        clearInterval(cardIntervalRef.current);
+      }
+    };
+  }, [gameId, wsConnected, fetchCardsForGame, CARD_FETCH_INTERVAL]);
+
+  const startGame = async (mode = 'progressive_rows', stage = 1) => {
+    try {
+      await fetch(`/games/${gameId}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, ball_set: 75, stage })
+      });
+      // Force immediate update
+      if (!wsConnected) {
+        setTimeout(fetchGameState, 100);
+      }
+    } catch (err) {
+      console.error('Failed to start game:', err);
+    }
   };
+
+  const drawNumber = async () => {
+    try {
+      await fetch(`/games/${gameId}/draw`, { method: 'POST' });
+      // Force immediate update
+      if (!wsConnected) {
+        setTimeout(fetchGameState, 100);
+      }
+    } catch (err) {
+      console.error('Failed to draw:', err);
+    }
+  };
+
+  const setStage = async (stage) => {
+    try {
+      await fetch(`/games/${gameId}/stage/${stage}`, { method: 'POST' });
+      if (!wsConnected) {
+        setTimeout(fetchGameState, 100);
+      }
+    } catch (err) {
+      console.error('Failed to set stage:', err);
+    }
+  };
+
+  const generateCards = async (count = 50) => {
+    try {
+      const res = await fetch(`/cards/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count, game_id: gameId })
+      });
+      const data = await res.json();
+      setGeneratedCards(data.cards);
+      // Also refetch to get the complete list
+      setTimeout(fetchCardsForGame, 100);
+    } catch (err) {
+      console.error('Failed to generate cards:', err);
+    }
+  };
+
+  const clearGeneratedCards = () => {
+    setGeneratedCards([]);
+  };
+
+  const validateCard = async () => {
+    if (!cardToValidate.trim()) return;
+
+    try {
+      const res = await fetch(`/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ game_id: gameId, serial: cardToValidate.trim() })
+      });
+      const data = await res.json();
+      setValidationResult(data);
+
+      if (data.valid) {
+        setCelebrating(true);
+        launchConfetti();
+        setTimeout(() => setCelebrating(false), 5000);
+      }
+    } catch (err) {
+      console.error('Failed to validate:', err);
+    }
+  };
+
 
   const getModeName = (mode) => {
     const names = {
@@ -228,88 +390,143 @@ const BingoApp = () => {
     return names[mode] || mode;
   };
 
-  // Display View - For projection
+  // Display View - Casino Style
+
   if (view === 'display') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 text-white p-8">
-        <canvas ref={confettiRef} className="fixed inset-0 pointer-events-none z-50" />
-        
-        <div className="max-w-7xl mx-auto">
-          <div className="flex justify-between items-center mb-12">
-            <h1 className="text-7xl font-bold tracking-tight">BINGO</h1>
-            <button
-              onClick={() => setView('admin')}
-              className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-lg backdrop-blur transition-all"
-            >
-              <Settings className="w-6 h-6" />
-            </button>
-          </div>
+      <div className="min-h-screen bg-black text-white p-8 relative overflow-hidden">
+        {/* Connection Status Indicator */}
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-full border border-gray-700">
+          <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+          <span className="text-xs text-gray-300">{wsConnected ? 'Live' : 'Polling'}</span>
+        </div>
 
-          <div className="mb-6 flex items-center space-x-2">
-            <label className="text-lg font-semibold">Game ID:</label>
-            <input
-              type="text"
-              value={gameId}
-              onChange={(e) => setGameId(e.target.value)}
-              className="px-3 py-2 rounded border bg-white/10 text-white backdrop-blur"
-              placeholder="Enter game ID"
-            />
+        {/* Casino Background Pattern */}
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute inset-0" style={{
+            backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)`
+          }}></div>
+        </div>
+
+        <canvas ref={confettiRef} className="fixed inset-0 pointer-events-none z-50" />
+
+        <div className="max-w-7xl mx-auto relative z-10">
+          {/* Header with Neon Effect */}
+          <div className="flex justify-between items-center mb-12">
+            <div className="relative">
+              <h1 className="text-8xl font-bold tracking-wider" style={{
+                textShadow: '0 0 20px #ff0080, 0 0 40px #ff0080, 0 0 60px #ff0080',
+                color: '#ffed4e'
+              }}>
+                BINGO
+              </h1>
+              <div className="absolute -bottom-2 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 rounded"></div>
+            </div>
+            <div className="flex items-center gap-4">
+              <input
+                type="text"
+                value={gameId}
+                onChange={(e) => setGameId(e.target.value)}
+                className="px-3 py-2 rounded bg-black/50 border border-yellow-500 text-yellow-300 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Game ID"
+              />
+              <button
+                onClick={() => setView('admin')}
+                className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg"
+              >
+                <Settings className="w-6 h-6" />
+              </button>
+            </div>
           </div>
 
           {gameState && (
             <>
-              <div className="mb-8 bg-white/10 backdrop-blur-lg rounded-2xl p-6">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="text-2xl font-semibold mb-2">
-                      {getModeName(gameState.mode)}
-                    </div>
-                    {gameState.mode === 'progressive_rows' && (
-                      <div className="text-xl text-white/80">
-                        Current Goal: {gameState.stage} Row{gameState.stage > 1 ? 's' : ''}
+              {/* Current Ball Display - Center Stage */}
+              <div className="mb-12 flex justify-center">
+                <div className="relative">
+                  <div className="absolute inset-0 blur-3xl opacity-50 bg-gradient-to-r from-yellow-400 via-red-500 to-purple-500 animate-pulse"></div>
+
+                  <div className="relative bg-gradient-to-br from-gray-900 to-black border-4 border-yellow-500 rounded-3xl p-12 shadow-2xl">
+                    {lastDrawn ? (
+                      <div className="flex flex-col items-center space-y-4">
+                        <div className="text-3xl font-bold text-yellow-400 tracking-wider">LAST CALLED</div>
+                        <BingoBall number={lastDrawn} isAnimating={isDrawing} size="xlarge" />
                       </div>
+                    ) : gameState.drawn.length > 0 ? (
+                      <div className="flex flex-col items-center space-y-4">
+                        <div className="text-3xl font-bold text-yellow-400 tracking-wider">CURRENT</div>
+                        <BingoBall number={gameState.drawn[gameState.drawn.length - 1]} size="xlarge" />
+                      </div>
+                    ) : (
+                      <div className="text-6xl font-bold text-gray-600">—</div>
                     )}
-                  </div>
-                  <div className="text-right">
-                    <div className="text-5xl font-bold text-yellow-300">
-                      {lastDrawn || (gameState.drawn.length > 0 ? gameState.drawn[gameState.drawn.length - 1] : '—')}
-                    </div>
-                    <div className="text-sm text-white/60 mt-1">Last Called</div>
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-10 gap-3 mb-8">
-                {Array.from({ length: 75 }, (_, i) => i + 1).map(num => {
-                  const drawn = gameState.drawn.includes(num);
-                  const isLast = num === lastDrawn;
-                  return (
-                    <div
-                      key={num}
-                      className={`aspect-square rounded-lg flex items-center justify-center text-2xl font-bold transition-all duration-300 ${
-                        drawn
-                          ? isLast
-                            ? 'bg-yellow-400 text-black scale-110 shadow-2xl animate-pulse'
-                            : 'bg-green-500 text-white'
-                          : 'bg-white/10 text-white/40'
-                      }`}
-                    >
-                      {num}
+              {/* Game Info Bar */}
+              <div className="mb-8 bg-gradient-to-r from-purple-900/50 to-blue-900/50 backdrop-blur-lg rounded-2xl p-6 border-2 border-yellow-500/30">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="text-3xl font-bold text-yellow-400 mb-2">
+                      {getModeName(gameState.mode)}
                     </div>
-                  );
-                })}
+                    {gameState.mode === 'progressive_rows' && (
+                      <div className="text-xl text-white/80">
+                        Goal: {gameState.stage} Row{gameState.stage > 1 ? 's' : ''}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xl text-white/60">Numbers Called</div>
+                    <div className="text-5xl font-bold text-green-400">
+                      {gameState.drawn.length}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bingo Board with Balls */}
+              <div className="grid grid-cols-15 gap-2 mb-8">
+                {['B', 'I', 'N', 'G', 'O'].map((letter, colIdx) => (
+                  <React.Fragment key={letter}>
+                    {Array.from({ length: 15 }, (_, i) => {
+                      const num = colIdx * 15 + i + 1;
+                      const drawn = gameState.drawn.includes(num);
+                      const isLast = num === lastDrawn;
+
+                      return (
+                        <div key={num} className="col-span-3 flex justify-center">
+                          {drawn ? (
+                            <BingoBall number={num} isAnimating={isLast} size="medium" />
+                          ) : (
+                            <div className="w-20 h-20 rounded-full bg-gray-800/50 border-2 border-gray-700 flex items-center justify-center text-gray-600 font-bold text-xl">
+                              {num}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
               </div>
             </>
           )}
 
           {celebrating && (
-            <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-40">
+            <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-40">
               <div className="text-center">
                 <div className="animate-bounce">
-                  <Crown className="w-32 h-32 mx-auto mb-6 text-yellow-300" />
+                  <Crown className="w-32 h-32 mx-auto mb-6 text-yellow-400" style={{
+                    filter: 'drop-shadow(0 0 20px #ffd700)'
+                  }} />
                 </div>
-                <h2 className="text-9xl font-bold text-yellow-300 mb-4 animate-pulse">BINGO!</h2>
-                <p className="text-3xl animate-pulse">We have a winner!</p>
+                <h2 className="text-9xl font-bold text-yellow-400 mb-4 animate-pulse" style={{
+                  textShadow: '0 0 30px #ffd700, 0 0 60px #ffd700'
+                }}>
+                  BINGO!
+                </h2>
+                <p className="text-4xl text-white animate-pulse">We have a winner!</p>
               </div>
             </div>
           )}
@@ -323,7 +540,13 @@ const BingoApp = () => {
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${wsConnected ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+              <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`}></div>
+              {wsConnected ? 'Connected' : 'Polling Mode'}
+            </div>
+          </div>
           <button
             onClick={() => setView('display')}
             className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all"
@@ -339,7 +562,7 @@ const BingoApp = () => {
               <Play className="w-6 h-6" />
               Game Controls
             </h2>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2">Game ID</label>
@@ -385,6 +608,17 @@ const BingoApp = () => {
                 Draw Number
               </button>
 
+              {lastDrawn && (
+                <div className="bg-gradient-to-r from-purple-100 to-blue-100 rounded-lg p-4 border-2 border-purple-300">
+                  <div className="text-center">
+                    <div className="text-sm font-semibold text-gray-600 mb-2">Last Drawn</div>
+                    <div className="flex justify-center">
+                      <BingoBall number={lastDrawn} size="medium" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {gameState?.mode === 'progressive_rows' && (
                 <div>
                   <label className="block text-sm font-medium mb-2">Set Stage (Required Rows)</label>
@@ -393,11 +627,10 @@ const BingoApp = () => {
                       <button
                         key={stage}
                         onClick={() => setStage(stage)}
-                        className={`px-4 py-2 rounded-lg transition-all ${
-                          gameState?.stage === stage
-                            ? 'bg-purple-600 text-white'
-                            : 'bg-gray-200 hover:bg-gray-300'
-                        }`}
+                        className={`px-4 py-2 rounded-lg transition-all ${gameState?.stage === stage
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-gray-200 hover:bg-gray-300'
+                          }`}
                       >
                         {stage}
                       </button>
@@ -410,11 +643,21 @@ const BingoApp = () => {
 
           {/* Card Generation */}
           <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <Printer className="w-6 h-6" />
-              Card Generation
-            </h2>
-            
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                <Printer className="w-6 h-6" />
+                Card Generation
+              </h2>
+              {generatedCards.length > 0 && (
+                <button
+                  onClick={clearGeneratedCards}
+                  className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+                >
+                  Clear Cards
+                </button>
+              )}
+            </div>
+
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
                 <button
@@ -436,7 +679,7 @@ const BingoApp = () => {
                   100 Cards
                 </button>
               </div>
-              
+
               <div className="flex space-x-2">
                 <input
                   type="number"
@@ -457,7 +700,10 @@ const BingoApp = () => {
               {generatedCards.length > 0 && (
                 <div className="border rounded-lg p-4 max-h-96 overflow-y-auto">
                   <div className="flex justify-between items-center mb-3">
-                    <h3 className="font-semibold">Generated Cards ({generatedCards.length})</h3>
+                    <h3 className="font-semibold">
+                      Generated Cards ({generatedCards.length})
+                      <span className="ml-2 text-xs text-gray-500">• Saved on server</span>
+                    </h3>
                     <button
                       onClick={() => window.print()}
                       className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
@@ -478,11 +724,14 @@ const BingoApp = () => {
                         {openCard === card.public_id && (
                           <div className="p-4">
                             <div className="grid grid-cols-5 gap-1">
-                              {["B","I","N","G","O"].map(letter => (
-                                <div key={letter} className="bg-indigo-600 text-white text-center font-bold p-1">
-                                  {letter}
-                                </div>
-                              ))}
+                              {["B", "I", "N", "G", "O"].map((letter, idx) => {
+                                const colors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-purple-500'];
+                                return (
+                                  <div key={letter} className={`${colors[idx]} text-white text-center font-bold p-1`}>
+                                    {letter}
+                                  </div>
+                                );
+                              })}
                               {card.grid.flat().map((cell, i) => (
                                 <div
                                   key={i}
@@ -508,7 +757,7 @@ const BingoApp = () => {
               <CheckCircle2 className="w-6 h-6" />
               Card Validation
             </h2>
-            
+
             <div className="flex gap-3 mb-4">
               <input
                 type="text"
@@ -547,9 +796,8 @@ const BingoApp = () => {
                         return (
                           <div
                             key={`${ridx}-${cidx}`}
-                            className={`aspect-square flex items-center justify-center text-lg font-bold rounded ${
-                              marked ? 'bg-blue-500 text-white' : 'bg-gray-200'
-                            }`}
+                            className={`aspect-square flex items-center justify-center text-lg font-bold rounded ${marked ? 'bg-blue-500 text-white' : 'bg-gray-200'
+                              }`}
                           >
                             {cell === 'FREE' ? '★' : cell}
                           </div>
@@ -601,20 +849,19 @@ const BingoApp = () => {
                 Card ID: {card.public_id}
               </div>
               <div className="grid grid-cols-5 gap-1">
-                {["B","I","N","G","O"].map(letter => (
-                  <div
-                    key={letter}
-                    className="bg-indigo-600 text-white text-center font-bold p-1"
-                  >
-                    {letter}
-                  </div>
-                ))}
+                {["B", "I", "N", "G", "O"].map((letter, idx) => {
+                  const colors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-purple-500'];
+                  return (
+                    <div key={letter} className={`${colors[idx]} text-white text-center font-bold p-1`}>
+                      {letter}
+                    </div>
+                  );
+                })}
                 {card.grid.flat().map((cell, i) => (
                   <div
                     key={i}
-                    className={`border text-center p-2 aspect-square flex items-center justify-center ${
-                      cell === "FREE" ? "bg-yellow-200 font-bold" : ""
-                    }`}
+                    className={`border text-center p-2 aspect-square flex items-center justify-center ${cell === "FREE" ? "bg-yellow-200 font-bold" : ""
+                      }`}
                   >
                     {cell}
                   </div>
