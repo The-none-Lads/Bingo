@@ -80,7 +80,7 @@ const BingoApp = () => {
       if (!storedGameId) {
         setGameId(GAME_ID_DEFAULT);
       }
-    }, []);
+    }, [GAME_ID_DEFAULT]);
 
   // Continue rendering hooks even if config isn't loaded; use safe defaults below.
   
@@ -100,7 +100,7 @@ const BingoApp = () => {
     } catch (err) {
       console.error('Failed to fetch cards:', err);
     }
-  }, [gameId]);
+  }, [gameId, API_BASE]);
 
   // Function to update game state (used by both WS and polling)
   const updateGameState = useCallback((data, source = 'unknown') => {
