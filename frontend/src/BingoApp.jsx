@@ -193,7 +193,7 @@ const launchConfetti = useCallback(() => {
 
   // WebSocket connection
   useEffect(() => {
-    const ws = new WebSocket(`${config.wsBaseUrl}/ws/${gameId}`);
+    const ws = new WebSocket(`${config.wsBaseUrl}/${gameId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
