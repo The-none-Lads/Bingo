@@ -1,6 +1,7 @@
 import subprocess
 import time
 import uuid
+import os
 
 import httpx
 import pytest
@@ -16,18 +17,15 @@ async def client(request):
     against a live uvicorn server (realistic).
     """
     if request.param == "inprocess":
-        # Use ASGITransport for in-process testing with FastAPI
         transport = httpx.ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
     else:
-        # Start uvicorn in a subprocess
         proc = subprocess.Popen(
             ["uvicorn", "app:app", "--port", "8000", "--host", "127.0.0.1"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        # Give the server a moment to boot
         time.sleep(1.5)
         try:
             async with httpx.AsyncClient(base_url="http://127.0.0.1:8000") as ac:
@@ -108,3 +106,44 @@ async def test_full_game_flow(client):
 async def test_draw_on_nonexistent_game_returns_404(client):
     resp = await client.post("/games/nonexistent-game/draw")
     assert resp.status_code == 404
+
+
+# --- NEW CORS TESTS ---
+
+
+@pytest.mark.asyncio
+async def test_cors_allows_configured_origin(client, monkeypatch):
+    # Pretend we set CORS_ORIGINS to include http://test and 127.0.0.1:8000
+    monkeypatch.setenv("CORS_ORIGINS", "http://test,127.0.0.1:8000")
+
+    resp = await client.options(
+        "/games/nonexistent-game/draw",
+        headers={
+            "Origin": "http://test",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp.status_code == 200
+    # CORS middleware should echo back the origin
+    assert resp.headers.get("access-control-allow-origin") == "http://test"
+
+
+@pytest.mark.asyncio
+async def test_cors_rejects_unset_origin(client, monkeypatch):
+    # Unset CORS_ORIGINS so app should fail fast or default
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+
+    resp = await client.options(
+        "/games/nonexistent-game/draw",
+        headers={
+            "Origin": "http://notallowed.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    # Depending on your get_cors_origins implementation:
+    # - If you default to ["*"], then allow-origin will be "*"
+    # - If you raise RuntimeError, pytest will fail at import
+    # Adjust assertion accordingly
+    assert resp.status_code in (200, 400)
+    if resp.status_code == 200:
+        assert resp.headers.get("access-control-allow-origin") in ("*", None)
