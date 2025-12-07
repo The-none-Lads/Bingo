@@ -152,7 +152,8 @@ jobs:
       - name: Start backend server
         run: |
           cd backend
-          uvicorn app:app --host 0.0.0.0 --port 8000 &
+          CORS_ORIGINS="http://test,127.0.0.1:8000" uvicorn app:app --host 0.0.0.0 --port 8000 &
+          echo $! > uvicorn.pid
           sleep 5
 
       - name: Run integration tests
@@ -163,4 +164,4 @@ jobs:
       - name: Stop backend server
         if: always()
         run: |
-          pkill -f uvicorn
+          kill $(cat uvicorn.pid) || true

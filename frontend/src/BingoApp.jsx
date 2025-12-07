@@ -64,6 +64,13 @@ const BingoApp = () => {
   const lastUpdateRef = useRef(0);
   const pollIntervalRef = useRef(null);
   const cardIntervalRef = useRef(null);
+  const API_BASE = config.apiBaseUrl;
+  const WS_BASE = config.wsBaseUrl;
+  const POLL_INTERVAL = config.pollInterval;
+  const CARD_FETCH_INTERVAL = config.cardFetchInterval;
+  const GAME_ID_DEFAULT = config.gameIdDefault;
+  const ENABLE_CELEBRATION = config.enableCelebration;
+  const CONFETTI_DURATION = config.confettiDuration;
   //const [config, setConfig] = useState(null);
   //const [configLoaded, setConfigLoaded] = useState(false);
 
@@ -71,23 +78,19 @@ const BingoApp = () => {
       // Set default game ID from config if not in localStorage
       const storedGameId = localStorage.getItem('bingo_game_id');
       if (!storedGameId) {
-        setGameId('demo');
+        setGameId(GAME_ID_DEFAULT);
       }
-    }, []);
+    }, [GAME_ID_DEFAULT]);
 
   // Continue rendering hooks even if config isn't loaded; use safe defaults below.
   
-  const API_BASE = config.apiBaseUrl;
-  const WS_BASE = config.wsBaseUrl;
-  const POLL_INTERVAL = config.pollInterval;
-  const CARD_FETCH_INTERVAL = config.cardFetchInterval;
+
 
   // Function to fetch all cards for the current game
   const fetchCardsForGame = useCallback(async () => {
     // Use safe defaults so hooks can be declared unconditionally
-    const API_BASE = config?.apiBaseUrl || '';
     try {
-      const response = await fetch(`/games/${gameId}/cards`);
+      const response = await fetch(`${API_BASE}/games/${gameId}/cards`);
       if (response.ok) {
         const data = await response.json();
         if (data.cards && data.cards.length > 0) {
@@ -97,7 +100,7 @@ const BingoApp = () => {
     } catch (err) {
       console.error('Failed to fetch cards:', err);
     }
-  }, [gameId]);
+  }, [gameId, API_BASE]);
 
   // Function to update game state (used by both WS and polling)
   const updateGameState = useCallback((data, source = 'unknown') => {
@@ -123,7 +126,7 @@ const BingoApp = () => {
   // Function to fetch game state
   const fetchGameState = useCallback(async () => {
     try {
-      const response = await fetch(`/games/${gameId}/state`);
+      const response = await fetch(`${API_BASE}/games/${gameId}/state`);
       if (response.ok) {
         const data = await response.json();
         const now = Date.now();
@@ -193,7 +196,7 @@ const launchConfetti = useCallback(() => {
 
   // WebSocket connection
   useEffect(() => {
-    const ws = new WebSocket(`${config.wsBaseUrl}/${gameId}`);
+    const ws = new WebSocket(`${config.wsBaseUrl}/ws/${gameId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -300,7 +303,7 @@ const launchConfetti = useCallback(() => {
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
-      await fetch(`/games/${gameId}/start`, {
+      await fetch(`${API_BASE}/games/${gameId}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, ball_set: 75, stage })
@@ -316,7 +319,7 @@ const launchConfetti = useCallback(() => {
 
   const drawNumber = async () => {
     try {
-      await fetch(`/games/${gameId}/draw`, { method: 'POST' });
+      await fetch(`${API_BASE}/games/${gameId}/draw`, { method: 'POST' });
       // Force immediate update
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
@@ -328,7 +331,7 @@ const launchConfetti = useCallback(() => {
 
   const setStage = async (stage) => {
     try {
-      await fetch(`/games/${gameId}/stage/${stage}`, { method: 'POST' });
+      await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { method: 'POST' });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
       }
@@ -339,7 +342,7 @@ const launchConfetti = useCallback(() => {
 
   const generateCards = async (count = 50) => {
     try {
-      const res = await fetch(`/cards/batch`, {
+      const res = await fetch(`${API_BASE}/cards/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ count, game_id: gameId })
@@ -361,7 +364,7 @@ const launchConfetti = useCallback(() => {
     if (!cardToValidate.trim()) return;
 
     try {
-      const res = await fetch(`/validate`, {
+      const res = await fetch(`${API_BASE}/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ game_id: gameId, serial: cardToValidate.trim() })

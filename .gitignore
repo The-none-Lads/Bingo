@@ -42,3 +42,4 @@ Thumbs.db
 .vscode/
 *.swp
 *~
+backend/storage/__pycache__/*
