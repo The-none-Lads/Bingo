@@ -1,7 +1,7 @@
+import os
 import subprocess
 import time
 import uuid
-import os
 
 import httpx
 import pytest
