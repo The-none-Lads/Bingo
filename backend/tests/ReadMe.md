@@ -20,7 +20,8 @@ backend/integration_tests/
 
 ## 🚀 Running Tests
 
-### Quick Start
+<details>
+<summary><strong>Quick Start</strong></summary>
 
 ```bash
 # Run all tests
@@ -36,8 +37,10 @@ pytest tests/test_cards.py -v
 # Run specific test
 pytest tests/test_cards.py::TestCardGeneration::test_generate_75_ball_card_structure -v
 ```
+</details>
 
-### Using pytest Directly
+<details>
+<summary><strong>Using pytest Directly</strong></summary>
 
 ```bash
 cd backend
@@ -69,8 +72,10 @@ pytest tests/ -l
 # Run tests in parallel (requires pytest-xdist)
 pytest tests/ -n auto
 ```
+</details>
 
-### Coverage Reports
+<details>
+<summary><strong>Coverage Reports</strong></summary>
 
 ```bash
 # Generate HTML coverage report
@@ -87,10 +92,12 @@ pytest tests/ --cov=. --cov-report=xml
 # Terminal coverage report with missing lines
 pytest tests/ --cov=. --cov-report=term-missing
 ```
+</details>
 
 ## 📋 Test Categories
 
-### Unit Tests
+<details>
+<summary><strong>Unit Tests</strong></summary>
 
 Pure unit tests that focus on individual functions and classes without external dependencies.
 
@@ -191,8 +198,10 @@ Tests for game mode validation logic:
 - **Edge Cases**
   - Empty grid (all FREE)
   - Grid with all numbers drawn
+</details>
 
-### Integration Tests
+<details>
+<summary><strong>Integration Tests</strong></summary>
 
 #### test_api.py
 
@@ -260,17 +269,21 @@ Full end-to-end integration tests with both in-process and live server testing:
   - Allowed origins
   - Rejected origins
   - Preflight requests
+</details>
 
 ## 🔧 Test Fixtures
 
-### Shared Fixtures (conftest.py)
+<details>
+<summary><strong>Shared Fixtures (conftest.py)</strong></summary>
 
 All fixtures are automatically available to all tests in the directory.
 
 **Configuration:**
 - `pytest_configure()` - Sets default environment variables (`CORS_ORIGINS`, `CORS_ALLOW_CREDENTIALS`)
+</details>
 
-### Test-Specific Fixtures
+<details>
+<summary><strong>Test-Specific Fixtures</strong></summary>
 
 **From test_api.py:**
 - `clean_db` - Cleans database before/after each test (autouse)
@@ -278,12 +291,14 @@ All fixtures are automatically available to all tests in the directory.
 
 **From test_modes.py:**
 - `sample_grid` - Standard 5x5 bingo grid for testing
+</details>
 
 ## 📊 Coverage Goals
 
 **Current target: 90%+**
 
-### Coverage by Module
+<details>
+<summary><strong>Coverage by Module</strong></summary>
 
 - `backend/logic/cards.py` - 95%+
 - `backend/logic/draws.py` - 95%+
@@ -292,8 +307,10 @@ All fixtures are automatically available to all tests in the directory.
 - `backend/app.py` - 85%+
 - `backend/models.py` - 100% (Pydantic models)
 - `backend/storage/db.py` - 100%
+</details>
 
-### Viewing Coverage
+<details>
+<summary><strong>Viewing Coverage</strong></summary>
 
 ```bash
 # Generate and view HTML report
@@ -303,15 +320,21 @@ open htmlcov/index.html
 # View in terminal
 pytest tests/ --cov=. --cov-report=term-missing
 ```
+</details>
 
-### Coverage Configuration
+<details>
+<summary><strong>Coverage Configuration</strong></summary>
 
 Coverage settings are configured in:
 - `pytest.ini` - Pytest and coverage options
 - `.coveragerc` - Coverage.py configuration
 - `setup.cfg` - Additional coverage report settings
+</details>
 
 ## 🔍 Test Markers
+
+<details>
+<summary><strong>Using Test Markers</strong></summary>
 
 Tests can be marked for selective running:
 
@@ -335,10 +358,12 @@ pytest -m unit          # Only unit tests
 pytest -m integration   # Only integration tests
 pytest -m "not slow"    # Exclude slow tests
 ```
+</details>
 
 ## 🐛 Debugging Tests
 
-### Verbose Output
+<details>
+<summary><strong>Verbose Output</strong></summary>
 
 ```bash
 # Show print statements
@@ -353,8 +378,10 @@ pytest tests/ -v -x
 # Show full traceback
 pytest tests/ -v --tb=long
 ```
+</details>
 
-### Debugging Specific Tests
+<details>
+<summary><strong>Debugging Specific Tests</strong></summary>
 
 ```bash
 # Run single test with full output
@@ -366,8 +393,10 @@ pytest tests/ --pdb
 # Drop into pdb on first failure
 pytest tests/ -x --pdb
 ```
+</details>
 
-### Log Output
+<details>
+<summary><strong>Log Output</strong></summary>
 
 ```bash
 # Show all log output
@@ -376,6 +405,7 @@ pytest tests/ --log-cli-level=DEBUG
 # Show specific logger
 pytest tests/ --log-cli-level=DEBUG --log-cli-format="%(name)s: %(message)s"
 ```
+</details>
 
 ## 🔄 Continuous Integration
 
@@ -384,7 +414,8 @@ Tests run automatically on:
 - Every pull request
 - Multiple Python versions (3.10, 3.11, 3.12, 3.13)
 
-### GitHub Actions Workflows
+<details>
+<summary><strong>GitHub Actions Workflows</strong></summary>
 
 1. **CI Workflow** (`.github/workflows/ci.yml`)
    - Runs on all branches and PRs
@@ -397,10 +428,12 @@ Tests run automatically on:
    - Blocking linting
    - Coverage reports to Codecov
    - Integration tests with live server
+</details>
 
 ## 🧰 Testing Tools
 
-### Installed Testing Libraries
+<details>
+<summary><strong>Installed Testing Libraries</strong></summary>
 
 ```
 pytest>=7.4.0              # Test framework
@@ -409,8 +442,10 @@ pytest-asyncio>=0.21.0     # Async test support
 httpx>=0.24.0              # Async HTTP client for testing
 requests>=2.31.0           # HTTP client for integration tests
 ```
+</details>
 
-### Linting Tools
+<details>
+<summary><strong>Linting Tools</strong></summary>
 
 ```
 black>=23.0.0              # Code formatter
@@ -419,10 +454,12 @@ mypy>=1.4.0                # Static type checker
 isort>=5.12.0              # Import sorter
 yamllint>=1.26.0           # YAML linter
 ```
+</details>
 
 ## 📝 Writing New Tests
 
-### Test Structure
+<details>
+<summary><strong>Test Structure</strong></summary>
 
 ```python
 class TestFeatureName:
@@ -439,8 +476,10 @@ class TestFeatureName:
         # Assert
         assert result == expected_output
 ```
+</details>
 
-### Best Practices
+<details>
+<summary><strong>Best Practices</strong></summary>
 
 1. **Use descriptive test names**
    - `test_generate_75_ball_card_structure` ✅
@@ -471,6 +510,7 @@ class TestFeatureName:
 7. **Use environment variables**
    - Configure via `conftest.py`
    - Never hardcode sensitive data
+</details>
 
 ## 🎯 Test Coverage Requirements
 
