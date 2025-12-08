@@ -12,15 +12,16 @@ This application provides a complete Bingo game experience with:
 - **Admin dashboard** for game control
 - **Casino-style display view** with animated ball draws
 - **Print-ready card layouts** for physical gameplay
+- **Automatic fallback to polling** when WebSocket connection is unavailable
 
 ## 🏗️ Tech Stack
 
 ### Backend
-- **Python 3.13** - Core language
+- **Python 3.13** - Core language (supports 3.10+)
 - **FastAPI** - Modern async web framework
 - **Uvicorn** - ASGI server with WebSocket support
 - **Pydantic** - Data validation
-- **pytest** - Testing framework
+- **pytest** - Testing framework with 90%+ coverage
 
 ### Frontend
 - **React 19** - UI framework
@@ -32,20 +33,21 @@ This application provides a complete Bingo game experience with:
 ### DevOps
 - **Docker** - Containerization
 - **Docker Compose** - Local orchestration
-- **Kubernetes** - Production orchestration
+- **Kubernetes** - Production orchestration with Ingress support
 - **GitHub Actions** - CI/CD pipeline
 - **GitHub Container Registry (GHCR)** - Image hosting
 
 ## 📋 Prerequisites
 
-- **Docker** and **Docker Compose** (for local development)
+- **Docker** and **Docker Compose** (for containerized development)
 - **Python 3.10+** (for local development without Docker)
-- **Node.js 20+** (for frontend development without Docker)
-- **Kubernetes cluster** (for production deployment)
+- **Node.js 20+** and **npm** (for frontend development without Docker)
+- **Kubernetes cluster** (for production deployment, optional)
+- **kubectl** (for Kubernetes deployment, optional)
 
-## 🚀 Local Development
+## 🚀 Quick Start
 
-### Quick Start with Docker Compose
+### Using Docker Compose (Recommended)
 
 1. **Clone the repository**
    ```bash
@@ -59,11 +61,12 @@ This application provides a complete Bingo game experience with:
    ```
 
 3. **Access the application**
-   - Frontend: http://localhost:3000
+   - Frontend: http://localhost:80
    - Backend API: http://localhost:8000
    - API Documentation: http://localhost:8000/docs
 
-### Manual Development Setup
+<details>
+<summary><strong>Local Development Setup (Click to expand)</strong></summary>
 
 #### Backend
 
@@ -78,6 +81,10 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
+
+# Set required environment variables
+export CORS_ORIGINS="http://localhost:3000,http://localhost:80"
+export CORS_ALLOW_CREDENTIALS="true"
 
 # Run the server
 uvicorn app:app --reload --host 0.0.0.0 --port 8000
@@ -96,9 +103,15 @@ npm install
 npm run dev
 ```
 
+The frontend will be available at http://localhost:5173
+</details>
+
 ## 🧪 Testing
 
-The project includes comprehensive test coverage for the backend:
+The project includes comprehensive test coverage for the backend with multiple test suites.
+
+<details>
+<summary><strong>Quick Test Commands</strong></summary>
 
 ```bash
 # Run all tests
@@ -119,23 +132,55 @@ make lint
 # Format code
 make format
 ```
+</details>
 
-### Test Structure
+<details>
+<summary><strong>Manual Testing</strong></summary>
+
+```bash
+# Run all tests with verbose output
+cd backend
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ -v --cov=. --cov-report=html --cov-report=term-missing
+
+# Run specific test file
+pytest tests/test_cards.py -v
+
+# Run specific test
+pytest tests/test_cards.py::TestCardGeneration::test_generate_75_ball_card_structure -v
+```
+</details>
+
+<details>
+<summary><strong>Test Structure</strong></summary>
+
 - `backend/tests/test_cards.py` - Card generation and serialization tests
 - `backend/tests/test_draws.py` - Draw engine tests
 - `backend/tests/test_modes.py` - Game mode validation tests
 - `backend/tests/test_api.py` - API endpoint integration tests
+- `backend/integration_tests/test_integration.py` - Full integration tests
+
+**Current test coverage: 90%+**
+
+For detailed testing documentation, see [backend/tests/README.md](backend/tests/README.md)
+</details>
 
 ## 📦 Production Deployment
 
-### Building Docker Images
+<details>
+<summary><strong>Building Docker Images</strong></summary>
 
-Images are automatically built and pushed to GHCR on version tags via GitHub Actions:
+Images are automatically built and pushed to GHCR on version tags or the `dev` tag via GitHub Actions:
 
 ```bash
 # Tag a new version
 git tag -a v1.0.0 -m "Release version 1.0.0"
 git push origin v1.0.0
+
+# Or push to dev for rolling updates
+git push origin dev
 ```
 
 ### Manual Docker Build
@@ -147,97 +192,34 @@ docker build -f backend/Dockerfile -t ghcr.io/the-none-lads/bingo-backend:latest
 # Build frontend
 docker build -f frontend/Dockerfile -t ghcr.io/the-none-lads/bingo-frontend:latest .
 
-# Push images
+# Push images (requires authentication)
 docker push ghcr.io/the-none-lads/bingo-backend:latest
 docker push ghcr.io/the-none-lads/bingo-frontend:latest
 ```
+</details>
 
-### Kubernetes Deployment
+<details>
+<summary><strong>Kubernetes Deployment</strong></summary>
 
-1. **Update image references** in `kubernetes/*.yaml` files to match your registry
+#### Prerequisites
 
-   1.1 *Make sure that kubernetes can access the private ghcr.io repository*
-    <details><summary><strong>Configuring Private Image Access</strong></summary>
+Since the Docker images are hosted privately on GHCR, you need to configure Kubernetes with authentication:
 
-    Since the Docker images are hosted privately on GitHub Container Registry (GHCR), you need to configure Kubernetes with authentication credentials before deploying.
+1. **Create a GitHub Personal Access Token**
+   - Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+   - Generate new token with `read:packages` scope
+   - Save the token securely
 
-    #### Step 1: Create a GitHub Personal Access Token
+2. **Create Kubernetes Secret**
+   ```bash
+   kubectl create secret docker-registry ghcr-secret \
+     --docker-server=ghcr.io \
+     --docker-username=YOUR_GITHUB_USERNAME \
+     --docker-password=YOUR_GITHUB_PAT \
+     --docker-email=YOUR_EMAIL@example.com
+   ```
 
-    1. Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
-    2. Click "Generate new token (classic)"
-    3. Give it a descriptive name (e.g., "Kubernetes GHCR Pull Token")
-    4. Select the `read:packages` scope
-    5. Generate the token and save it securely
-
-    #### Step 2: Create Kubernetes Secret
-
-    Create a Docker registry secret in your Kubernetes cluster with your GitHub credentials:
-
-    ```bash
-    kubectl create secret docker-registry ghcr-secret \
-    --docker-server=ghcr.io \
-    --docker-username=YOUR_GITHUB_USERNAME \
-    --docker-password=YOUR_GITHUB_PAT \
-    --docker-email=YOUR_EMAIL@example.com
-    ```
-
-    Replace:
-    - `YOUR_GITHUB_USERNAME` with your GitHub username
-    - `YOUR_GITHUB_PAT` with the Personal Access Token you created
-    - `YOUR_EMAIL@example.com` with your email address
-
-    **Note**: If you're deploying to a specific namespace, add the `-n NAMESPACE` flag to the command.
-
-    #### Step 3: Update Deployment Files
-
-    The deployment files have already been configured to use the `ghcr-secret`. Each deployment includes:
-
-    ```yaml
-    spec:
-    template:
-        spec:
-        imagePullSecrets:
-            - name: ghcr-secret
-    ```
-
-    This tells Kubernetes to use the secret when pulling images from GHCR.
-
-    #### Step 4: Verify Secret Creation
-
-    Confirm the secret was created successfully:
-
-    ```bash
-    kubectl get secrets
-    kubectl describe secret ghcr-secret
-    ```
-
-    #### Alternative: Declarative Secret Creation
-
-    For GitOps workflows or version control, you can create the secret declaratively:
-
-    ```bash
-    # Generate base64 encoded Docker config
-    kubectl create secret docker-registry ghcr-secret \
-    --docker-server=ghcr.io \
-    --docker-username=YOUR_GITHUB_USERNAME \
-    --docker-password=YOUR_GITHUB_PAT \
-    --docker-email=YOUR_EMAIL@example.com \
-    --dry-run=client -o yaml > kubernetes/ghcr-secret.yaml
-    ```
-
-    **Security Warning**: The generated `ghcr-secret.yaml` file contains your credentials in base64 encoding (which is NOT encryption). Never commit this file to version control. Add it to `.gitignore`:
-
-    ```bash
-    echo "kubernetes/ghcr-secret.yaml" >> .gitignore
-    ```
-
-    For production environments, consider using:
-    - **Sealed Secrets** - Encrypt secrets for safe storage in Git
-    - **External Secrets Operator** - Sync secrets from external secret managers (AWS Secrets Manager, HashiCorp Vault, etc.)
-    - **Kubernetes service accounts** with GHCR authentication if using GitHub-hosted runners
-    </details>
-
-2. **Apply Kubernetes manifests**
+3. **Deploy to Kubernetes**
    ```bash
    # Deploy backend
    kubectl apply -f kubernetes/backend-deployment.yaml
@@ -246,97 +228,188 @@ docker push ghcr.io/the-none-lads/bingo-frontend:latest
    # Deploy frontend
    kubectl apply -f kubernetes/frontend-deployment.yaml
    kubectl apply -f kubernetes/frontend-service.yaml
+
+   # Optional: Deploy Ingress (configure your domain first)
+   kubectl apply -f kubernetes/ingress.yaml
    ```
 
-3. **Verify deployment**
+4. **Verify deployment**
    ```bash
    kubectl get pods
    kubectl get services
+   kubectl logs -f deployment/backend
+   kubectl logs -f deployment/frontend
    ```
 
-4. **Access the application**
-   - Use port-forwarding for testing:
-     ```bash
-     kubectl port-forward service/frontend 3000:3000
-     kubectl port-forward service/backend 8000:8000
-     ```
-   - Or configure an Ingress for production access
+5. **Access the application**
+   
+   For testing:
+   ```bash
+   # Port forward frontend
+   kubectl port-forward service/frontend 3000:3000
+   
+   # Port forward backend
+   kubectl port-forward service/backend 8000:8000
+   ```
+   
+   For production: Configure the Ingress resource with your domain and SSL certificates.
+</details>
+
+<details>
+<summary><strong>Environment Configuration</strong></summary>
+
+The frontend supports runtime environment configuration via environment variables:
+
+```bash
+# Docker Compose
+services:
+  frontend:
+    environment:
+      - apiBaseUrl=http://localhost:8000
+      - wsBaseUrl=ws://localhost:8000/ws
+      - pollInterval=20000
+      - cardFetchInterval=300000
+      - gameIdDefault=demo
+      - enableCelebration=true
+      - confettiDuration=5000
+```
+
+See [frontend/README.md](frontend/README.md) for complete configuration options.
+</details>
 
 ## 🎮 Usage
 
-### Admin Dashboard
+<details>
+<summary><strong>Admin Dashboard</strong></summary>
 
-1. Navigate to http://localhost:3000
+1. Navigate to http://localhost:80 (or your deployed URL)
 2. Click the **Settings** button to access the admin dashboard
 3. Configure game settings:
-   - Set a unique Game ID
-   - Choose game mode (Progressive Rows, Full House, etc.)
-   - Generate cards for players
+   - Set a unique Game ID (stored in localStorage)
+   - Choose game mode (Progressive Rows, Full House, Four Corners, Diagonals)
+   - Generate cards for players (10, 50, 100, or custom count)
    - Draw numbers during gameplay
+   - Set progressive stages (for Progressive Rows mode)
    - Validate winning cards
+</details>
 
-### Display View
+<details>
+<summary><strong>Display View</strong></summary>
 
 1. Click "Switch to Display View" from the admin dashboard
 2. Full-screen casino-style interface shows:
    - Last called number with animated ball
-   - Full bingo board with marked numbers
+   - Full 75-number bingo board with marked numbers
    - Game mode and progress information
-   - Real-time updates via WebSocket
+   - Real-time updates via WebSocket (with polling fallback)
+   - Connection status indicator
+</details>
 
-### Card Validation
+<details>
+<summary><strong>Card Management</strong></summary>
+
+- **Generate Cards**: Create batches of 10, 50, 100, or custom amounts
+- **View Cards**: Click on any card to expand and see the full grid
+- **Print Cards**: Use the "Print All" button to print all generated cards
+- **Cards are persistent**: All cards are saved on the server and can be retrieved
+</details>
+
+<details>
+<summary><strong>Card Validation</strong></summary>
 
 1. Players receive printed cards with unique IDs (e.g., `A1B2C3D4`)
 2. Enter the card ID in the validation section
-3. System automatically checks if the card has won
+3. System automatically checks if the card has won based on:
+   - Current game mode
+   - Numbers drawn
+   - Progressive stage (if applicable)
 4. Celebration animation displays for winners
+</details>
 
 ## 🔌 API Endpoints
 
-### Game Management
+<details>
+<summary><strong>Game Management</strong></summary>
+
 - `POST /games/{game_id}/start` - Start a new game
+  ```json
+  {
+    "mode": "progressive_rows",
+    "ball_set": 75,
+    "stage": 1
+  }
+  ```
 - `POST /games/{game_id}/draw` - Draw a number
 - `GET /games/{game_id}/state` - Get current game state
 - `POST /games/{game_id}/stage/{stage}` - Set progressive stage
 - `WS /ws/{game_id}` - WebSocket connection for real-time updates
+</details>
 
-### Card Operations
+<details>
+<summary><strong>Card Operations</strong></summary>
+
 - `POST /cards/batch` - Generate multiple cards
+  ```json
+  {
+    "count": 50,
+    "game_id": "demo"
+  }
+  ```
 - `GET /cards/{card_id}` - Retrieve a specific card
+- `GET /games/{game_id}/cards` - Get all cards for a game
+</details>
 
-### Validation
+<details>
+<summary><strong>Validation</strong></summary>
+
 - `POST /validate` - Validate a card for winning
+  ```json
+  {
+    "game_id": "demo",
+    "serial": "A1B2C3D4"
+  }
+  ```
+</details>
 
 Full API documentation available at: http://localhost:8000/docs
 
 ## 🔄 CI/CD Pipeline
 
-The project uses GitHub Actions for automated testing and deployment:
+The project uses GitHub Actions for automated testing and deployment.
 
-### Workflows
+<details>
+<summary><strong>Workflows Overview</strong></summary>
 
 1. **CI** (`.github/workflows/ci.yml`)
    - Runs on all branches and pull requests
    - Executes Python and Node.js tests
-   - Validates code quality
+   - Runs comprehensive linting (flake8, black, isort, mypy, eslint, stylelint, yamllint)
+   - All linting is non-blocking (warnings only)
 
 2. **Tests** (`.github/workflows/test.yml`)
-   - Runs on main and develop branches
+   - Runs on main and Dev branches
    - Tests against Python 3.10, 3.11, 3.12, 3.13
-   - Runs linters (flake8, black, isort, mypy)
+   - Comprehensive linting suite (blocking)
+   - Runs unit and integration tests
    - Generates coverage reports
    - Uploads results to Codecov
 
 3. **Docker Release** (`.github/workflows/docker-release.yml`)
-   - Triggers on version tags (e.g., `v1.0.0`)
+   - Triggers on version tags (e.g., `v1.0.0`) or `dev` tag
    - Builds and pushes backend and frontend images to GHCR
-   - Images tagged with the git tag name
+   - Tags images with version number and `latest` (for releases)
+   - Rolling `dev` tag for development builds
+</details>
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please follow these guidelines:
 
+<details>
+<summary><strong>Getting Started</strong></summary>
+
 1. **Fork the repository**
+
 2. **Create a feature branch**
    ```bash
    git checkout -b feature/your-feature-name
@@ -346,6 +419,11 @@ Contributions are welcome! Please follow these guidelines:
    - Follow the existing code style
    - Add tests for new features
    - Update documentation as needed
+   - Ensure backend environment variables are set:
+     ```bash
+     export CORS_ORIGINS="http://localhost:3000"
+     export CORS_ALLOW_CREDENTIALS="true"
+     ```
 
 4. **Run tests and linting**
    ```bash
@@ -365,46 +443,106 @@ Contributions are welcome! Please follow these guidelines:
    ```
 
 7. **Open a Pull Request**
-   - Use the provided PR template
+   - Use the provided PR template (`.github/github_pr_template.md`)
    - Link any related issues
    - Ensure all CI checks pass
+</details>
 
-### Development Guidelines
+<details>
+<summary><strong>Development Guidelines</strong></summary>
 
 - Follow PEP 8 for Python code
 - Use ESLint rules for JavaScript/React code
-- Write tests for new features
-- Maintain test coverage above 90%
+- Write tests for new features (maintain 90%+ coverage)
 - Update documentation for API changes
 - Use meaningful commit messages
+- Add type hints to Python functions
+- Use environment variables for configuration (never hardcode)
+
+### Code Style
+
+- **Python**: Black formatter (88 char line length)
+- **JavaScript**: ESLint with React hooks plugin
+- **Imports**: isort for Python import sorting
+- **Type Checking**: mypy for Python type checking
+</details>
 
 ## 📄 License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
+
 ## 🐛 Troubleshooting
 
-### Common Issues
+<details>
+<summary><strong>Common Issues</strong></summary>
 
 **WebSocket connection fails**
 - Ensure backend is running on port 8000
-- Check CORS configuration in `backend/app.py`
+- Check CORS configuration in `backend/app.py` (requires `CORS_ORIGINS` environment variable)
 - Verify firewall rules allow WebSocket connections
+- Application will automatically fall back to polling if WebSocket fails
+
+**Backend fails to start**
+- Ensure `CORS_ORIGINS` environment variable is set
+- Check that port 8000 is not already in use
+- Verify Python dependencies are installed: `pip install -r backend/requirements.txt`
+
+**Frontend can't connect to backend**
+- Verify backend is running: `curl http://localhost:8000/docs`
+- Check Vite proxy configuration in `frontend/vite.config.js`
+- For production, verify environment variables in `config.js`
 
 **Cards not generating**
 - Confirm game has been started via `/games/{game_id}/start`
-- Check backend logs for errors
-- Verify database connection (if using persistent storage)
+- Check backend logs for errors: `docker-compose logs backend`
+- Verify CORS origins are configured correctly
 
 **Docker build fails**
 - Clear Docker cache: `docker system prune -a`
 - Ensure sufficient disk space
 - Check Dockerfile paths are correct
+- Verify Node.js and Python versions match requirements
 
 **Tests failing**
 - Install dev dependencies: `pip install -r requirements-dev.txt`
+- Ensure environment variables are set (handled by `conftest.py`)
 - Clear pytest cache: `make clean`
 - Run tests individually to isolate issues
+
+**Kubernetes pods not starting**
+- Verify `ghcr-secret` exists: `kubectl get secrets`
+- Check image pull permissions with GitHub token
+- Review pod logs: `kubectl logs -f deployment/backend`
+- Ensure resource limits are appropriate for your cluster
+</details>
+
+## 🔧 Configuration
+
+<details>
+<summary><strong>Backend Environment Variables</strong></summary>
+
+Required:
+- `CORS_ORIGINS` - Comma-separated list of allowed origins (e.g., `"http://localhost:3000,http://localhost:80"`)
+
+Optional:
+- `CORS_ALLOW_CREDENTIALS` - Allow credentials (default: `"true"`)
+</details>
+
+<details>
+<summary><strong>Frontend Configuration</strong></summary>
+
+Runtime configuration via `config.js`:
+- `apiBaseUrl` - Backend API URL (default: `"/"`)
+- `wsBaseUrl` - WebSocket URL (default: `"ws://localhost:8000/ws"`)
+- `pollInterval` - Polling interval in ms (default: `20000`)
+- `cardFetchInterval` - Card refresh interval in ms (default: `300000`)
+- `gameIdDefault` - Default game ID (default: `"demo"`)
+- `enableCelebration` - Enable confetti (default: `true`)
+- `confettiDuration` - Celebration duration in ms (default: `5000`)
+
+See [frontend/README.md](frontend/README.md) for complete configuration guide.
+</details>
 
 ## 📞 Support
 
@@ -412,12 +550,14 @@ For issues, questions, or suggestions:
 - Open an issue on GitHub
 - Check existing issues for solutions
 - Review API documentation at `/docs`
+- Check the troubleshooting section
 
 ## 🙏 Acknowledgments
 
 - Built with FastAPI, React, and modern web technologies
 - Icon library by Lucide React
 - Styled with Tailwind CSS
+- WebSocket support with automatic polling fallback
 
 ---
 
