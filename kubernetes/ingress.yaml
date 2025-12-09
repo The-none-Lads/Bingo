@@ -76,7 +76,7 @@ spec:
 
           # Explicit frontend static assets
           - path: /assets(/|$)(.*)
-            pathType: Prefix
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: frontend
