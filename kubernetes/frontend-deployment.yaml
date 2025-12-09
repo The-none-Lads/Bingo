@@ -30,4 +30,7 @@ spec:
             requests:
               cpu: "50m"
               memory: "64Mi"
+            envFrom:
+              - configMapRef:
+                  name: bingo-config
       restartPolicy: Always
