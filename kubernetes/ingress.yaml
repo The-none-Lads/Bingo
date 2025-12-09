@@ -73,6 +73,24 @@ spec:
                 name: backend
                 port:
                   number: 8000
+
+          # Explicit frontend static assets
+          - path: /assets(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
+
+          - path: /config.js
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
+
           # Frontend (catch-all for SPA)
           - path: /
             pathType: Prefix
