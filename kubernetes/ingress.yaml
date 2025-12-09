@@ -49,6 +49,30 @@ spec:
                 port:
                   number: 8000
 
+          # API routes with specific urls
+          - path: /games(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /cards(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /validate
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
           # Frontend (catch-all for SPA)
           - path: /
             pathType: Prefix
