@@ -17,11 +17,7 @@ metadata:
     nginx.ingress.kubernetes.io/enable-cors: "true"
     nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
     nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "https://bingo.yourdomain.com"
-
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      add_header Content-Security-Policy "default-src 'self'; script-src 'self' https://bingo.youtdomain.com https://static.cloudflareinsights.com https://bingo.yourdomain.com/cdn-cgi/; style-src 'self'; img-src 'self' data:; connect-src 'self' wss://bingo.yourdomain.com/ws; object-src 'none'; base-uri 'self';" always;
-      
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://bingo.yourdomain.com"      
 
 spec:
   ingressClassName: nginx
