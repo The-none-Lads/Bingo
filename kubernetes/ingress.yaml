@@ -6,7 +6,7 @@ metadata:
   name: bingo-ingress
   annotations:
     # Adjust these based on your ingress controller
-    cert-manager.io/cluster-issuer: "letsencrypt-dns01"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 
     # WebSocket support
     nginx.ingress.kubernetes.io/websocket-services: "backend"
