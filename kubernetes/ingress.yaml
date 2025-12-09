@@ -6,7 +6,7 @@ metadata:
   name: bingo-ingress
   annotations:
     # Adjust these based on your ingress controller
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/cluster-issuer: "letsencrypt-dns01"
 
     # WebSocket support
     nginx.ingress.kubernetes.io/websocket-services: "backend"
@@ -25,10 +25,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - bingo.yourdomain.com
+        - bingo.gameserver1.cc
       secretName: bingo-tls
   rules:
-    - host: bingo.yourdomain.com
+    - host: bingo.gameserver1.cc
       http:
         paths:
           # Backend API routes (with /api prefix)
@@ -49,6 +49,30 @@ spec:
                 port:
                   number: 8000
 
+          # API routes with specific urls
+          - path: /games(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /cards(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /validate
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
           # Frontend (catch-all for SPA)
           - path: /
             pathType: Prefix
