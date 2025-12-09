@@ -25,10 +25,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - bingo.gameserver1.cc
+        - bingo.yourdomain.com
       secretName: bingo-tls
   rules:
-    - host: bingo.gameserver1.cc
+    - host: bingo.yourdomain.com
       http:
         paths:
           # Backend API routes (with /api prefix)
