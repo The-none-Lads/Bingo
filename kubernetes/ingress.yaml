@@ -17,7 +17,7 @@ metadata:
     nginx.ingress.kubernetes.io/enable-cors: "true"
     nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
     nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "https://bingo.yourdomain.com"      
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://bingo.yourdomain.com"
 
 spec:
   ingressClassName: nginx
