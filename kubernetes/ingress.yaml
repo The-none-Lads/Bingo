@@ -17,9 +17,7 @@ metadata:
     nginx.ingress.kubernetes.io/enable-cors: "true"
     nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
     nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
-
-    # Rewrite rules to handle /api prefix
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://bingo.yourdomain.com"
 
 spec:
   ingressClassName: nginx
@@ -32,8 +30,8 @@ spec:
       http:
         paths:
           # Backend API routes (with /api prefix)
-          - path: /api(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /api
+            pathType: Prefix
             backend:
               service:
                 name: backend
@@ -50,16 +48,16 @@ spec:
                   number: 8000
 
           # API routes with specific urls
-          - path: /games(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /games
+            pathType: Prefix
             backend:
               service:
                 name: backend
                 port:
                   number: 8000
 
-          - path: /cards(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /cards
+            pathType: Prefix
             backend:
               service:
                 name: backend
@@ -73,6 +71,24 @@ spec:
                 name: backend
                 port:
                   number: 8000
+
+          # Explicit frontend static assets
+          - path: /assets
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
+
+          - path: /config.js
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
+
           # Frontend (catch-all for SPA)
           - path: /
             pathType: Prefix
