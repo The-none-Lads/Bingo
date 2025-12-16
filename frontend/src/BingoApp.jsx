@@ -444,7 +444,6 @@ const launchConfetti = useCallback(() => {
 
           {gameState && (
             <>
-              {/* Current Ball Display - Center Stage */}
               <div className="mb-12 flex justify-center">
                 <div className="relative">
                   <div className="absolute inset-0 blur-3xl opacity-50 bg-gradient-to-r from-yellow-400 via-red-500 to-purple-500 animate-pulse"></div>
