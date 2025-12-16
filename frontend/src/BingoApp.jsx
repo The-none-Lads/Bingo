@@ -46,20 +46,20 @@ const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
 
 const BingoApp = () => {
   const [view, setView] = useState('display');
-  const [gameId, setGameId] = useState(() => {
-    return localStorage.getItem('bingo_game_id') || 'demo';
-  });
+  const [gameId, setGameId] = useState(() => localStorage.getItem('bingo_game_id') || 'demo');
   const [gameState, setGameState] = useState(null);
   const [lastDrawn, setLastDrawn] = useState(null);
   const [validationResult, setValidationResult] = useState(null);
   const [cardToValidate, setCardToValidate] = useState('');
   const [generatedCards, setGeneratedCards] = useState([]);
   const [celebrating, setCelebrating] = useState(false);
-  const confettiRef = useRef(null);
   const [customCount, setCustomCount] = useState(10);
   const [openCard, setOpenCard] = useState(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
+  const [recentBalls, setRecentBalls] = useState([]);
+  //const [showAllDrawn, setShowAllDrawn] = useState(false);
+  const confettiRef = useRef(null);
   const wsRef = useRef(null);
   const lastUpdateRef = useRef(0);
   const pollIntervalRef = useRef(null);
@@ -69,10 +69,6 @@ const BingoApp = () => {
   const POLL_INTERVAL = config.pollInterval;
   const CARD_FETCH_INTERVAL = config.cardFetchInterval;
   const GAME_ID_DEFAULT = config.gameIdDefault;
-  const ENABLE_CELEBRATION = config.enableCelebration;
-  const CONFETTI_DURATION = config.confettiDuration;
-  //const [config, setConfig] = useState(null);
-  //const [configLoaded, setConfigLoaded] = useState(false);
 
   useEffect(() => {
       // Set default game ID from config if not in localStorage
@@ -105,7 +101,6 @@ const BingoApp = () => {
   // Function to update game state (used by both WS and polling)
   const updateGameState = useCallback((data, source = 'unknown') => {
     if (!data) return;
-
     const prevLength = gameState?.drawn?.length || 0;
     const newLength = data.drawn?.length || 0;
 
@@ -113,14 +108,11 @@ const BingoApp = () => {
       const newNum = data.drawn[data.drawn.length - 1];
       setLastDrawn(newNum);
       setIsDrawing(true);
+      setRecentBalls(prev => [...prev, newNum].slice(-5));
       setTimeout(() => setIsDrawing(false), 2000);
     }
-
     setGameState(data);
-
-    if (source === 'websocket') {
-      lastUpdateRef.current = Date.now();
-    }
+    if (source === 'websocket') lastUpdateRef.current = Date.now();
   }, [gameState]);
 
   // Function to fetch game state
@@ -196,7 +188,7 @@ const launchConfetti = useCallback(() => {
 
   // WebSocket connection
   useEffect(() => {
-    const ws = new WebSocket(`${config.wsBaseUrl}/ws/${gameId}`);
+    const ws = new WebSocket(`${config.wsBaseUrl}/${gameId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -250,7 +242,7 @@ const launchConfetti = useCallback(() => {
       // After polling, check if WS is closed and try reconnect
       if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
         console.log("🔄 Attempting reconnect after poll...");
-        const ws = new WebSocket(`${config.wsBaseUrl}/ws/${gameId}`);
+        const ws = new WebSocket(`${config.wsBaseUrl}/${gameId}`);
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -403,40 +395,22 @@ const launchConfetti = useCallback(() => {
           <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
           <span className="text-xs text-gray-300">{wsConnected ? 'Live' : 'Polling'}</span>
         </div>
-
-        {/* Casino Background Pattern */}
+        {/*background pattern*/}
         <div className="absolute inset-0 opacity-10">
-          <div className="absolute inset-0" style={{
-            backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)`
-          }}></div>
+          <div className="absolute inset-0" style={{ backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)` }}></div>
         </div>
-
         <canvas ref={confettiRef} className="fixed inset-0 pointer-events-none z-50" />
-
         <div className="max-w-7xl mx-auto relative z-10">
-          {/* Header with Neon Effect */}
           <div className="flex justify-between items-center mb-12">
             <div className="relative">
-              <h1 className="text-8xl font-bold tracking-wider" style={{
-                textShadow: '0 0 20px #ff0080, 0 0 40px #ff0080, 0 0 60px #ff0080',
-                color: '#ffed4e'
-              }}>
-                BINGO
-              </h1>
+              <h1 className="text-8xl font-bold tracking-wider" style={{ textShadow: '0 0 20px #ff0080, 0 0 40px #ff0080, 0 0 60px #ff0080', color: '#ffed4e' }}>BINGO</h1>
               <div className="absolute -bottom-2 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 rounded"></div>
             </div>
             <div className="flex items-center gap-4">
-              <input
-                type="text"
-                value={gameId}
-                onChange={(e) => setGameId(e.target.value)}
-                className="px-3 py-2 rounded bg-black/50 border border-yellow-500 text-yellow-300 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                placeholder="Game ID"
-              />
-              <button
-                onClick={() => setView('admin')}
-                className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg"
-              >
+              <input type="text" value={gameId} onChange={(e) => setGameId(e.target.value)}
+                className="px-3 py-2 rounded bg-black/50 border border-yellow-500 text-yellow-300 focus:outline-none focus:ring-2 focus:ring-yellow-400" placeholder="Game ID" />
+              <button onClick={() => setView('admin')}
+                className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg">
                 <Settings className="w-6 h-6" />
               </button>
             </div>
@@ -447,12 +421,28 @@ const launchConfetti = useCallback(() => {
               <div className="mb-12 flex justify-center">
                 <div className="relative">
                   <div className="absolute inset-0 blur-3xl opacity-50 bg-gradient-to-r from-yellow-400 via-red-500 to-purple-500 animate-pulse"></div>
-
                   <div className="relative bg-gradient-to-br from-gray-900 to-black border-4 border-yellow-500 rounded-3xl p-12 shadow-2xl">
                     {lastDrawn ? (
-                      <div className="flex flex-col items-center space-y-4">
-                        <div className="text-3xl font-bold text-yellow-400 tracking-wider">LAST CALLED</div>
-                        <BingoBall number={lastDrawn} isAnimating={isDrawing} size="xlarge" />
+                      <div className="flex items-center gap-8">
+                        <div className="flex flex-col items-center space-y-4">
+                          <div className="text-3xl font-bold text-yellow-400 tracking-wider">LAST CALLED</div>
+                          <BingoBall number={lastDrawn} isAnimating={isDrawing} size="xlarge" />
+                        </div>
+                        {recentBalls.length > 1 && (
+                          <div className="flex items-center gap-3 ml-8">
+                            {recentBalls.slice(0, -1).reverse().map((num, idx) => {
+                              const scale = 1 - (idx * 0.15);
+                              const translateX = idx * -15;
+                              const opacity = 1 - (idx * 0.2);
+                              return (
+                                <div key={`${num}-${idx}`} style={{ transform: `scale(${scale}) translateX(${translateX}px)`, opacity: opacity,
+                                  transition: 'all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)', zIndex: 10 - idx }}>
+                                  <BingoBall number={num} size="large" />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     ) : gameState.drawn.length > 0 ? (
                       <div className="flex flex-col items-center space-y-4">
@@ -470,64 +460,26 @@ const launchConfetti = useCallback(() => {
               <div className="mb-8 bg-gradient-to-r from-purple-900/50 to-blue-900/50 backdrop-blur-lg rounded-2xl p-6 border-2 border-yellow-500/30">
                 <div className="flex justify-between items-center">
                   <div>
-                    <div className="text-3xl font-bold text-yellow-400 mb-2">
-                      {getModeName(gameState.mode)}
-                    </div>
+                    <div className="text-3xl font-bold text-yellow-400 mb-2">{getModeName(gameState.mode)}</div>
                     {gameState.mode === 'progressive_rows' && (
-                      <div className="text-xl text-white/80">
-                        Goal: {gameState.stage} Row{gameState.stage > 1 ? 's' : ''}
-                      </div>
+                      <div className="text-xl text-white/80">Goal: {gameState.stage} Row{gameState.stage > 1 ? 's' : ''}</div>
                     )}
                   </div>
                   <div className="text-right">
                     <div className="text-xl text-white/60">Numbers Called</div>
-                    <div className="text-5xl font-bold text-green-400">
-                      {gameState.drawn.length}
-                    </div>
+                    <div className="text-5xl font-bold text-green-400">{gameState.drawn.length}</div>
                   </div>
                 </div>
               </div>
-
-              {/* Bingo Board with Balls */}
-              <div className="grid grid-cols-15 gap-2 mb-8">
-                {['B', 'I', 'N', 'G', 'O'].map((letter, colIdx) => (
-                  <React.Fragment key={letter}>
-                    {Array.from({ length: 15 }, (_, i) => {
-                      const num = colIdx * 15 + i + 1;
-                      const drawn = gameState.drawn.includes(num);
-                      const isLast = num === lastDrawn;
-
-                      return (
-                        <div key={num} className="col-span-3 flex justify-center">
-                          {drawn ? (
-                            <BingoBall number={num} isAnimating={isLast} size="medium" />
-                          ) : (
-                            <div className="w-20 h-20 rounded-full bg-gray-800/50 border-2 border-gray-700 flex items-center justify-center text-gray-600 font-bold text-xl">
-                              {num}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </React.Fragment>
-                ))}
-              </div>
             </>
           )}
-
           {celebrating && (
             <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-40">
               <div className="text-center">
                 <div className="animate-bounce">
-                  <Crown className="w-32 h-32 mx-auto mb-6 text-yellow-400" style={{
-                    filter: 'drop-shadow(0 0 20px #ffd700)'
-                  }} />
+                  <Crown className="w-32 h-32 mx-auto mb-6 text-yellow-400" style={{ filter: 'drop-shadow(0 0 20px #ffd700)' }} />
                 </div>
-                <h2 className="text-9xl font-bold text-yellow-400 mb-4 animate-pulse" style={{
-                  textShadow: '0 0 30px #ffd700, 0 0 60px #ffd700'
-                }}>
-                  BINGO!
-                </h2>
+                <h2 className="text-9xl font-bold text-yellow-400 mb-4 animate-pulse" style={{ textShadow: '0 0 30px #ffd700, 0 0 60px #ffd700' }}>BINGO!</h2>
                 <p className="text-4xl text-white animate-pulse">We have a winner!</p>
               </div>
             </div>

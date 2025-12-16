@@ -1,6 +1,7 @@
 import os
 from typing import List
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from logic.cards import generate_75_ball_card, serialize_card, short_id
@@ -17,6 +18,8 @@ from models import (
 from storage.db import db
 
 app = FastAPI()
+
+load_dotenv()
 
 
 # Configuration from environment variables
