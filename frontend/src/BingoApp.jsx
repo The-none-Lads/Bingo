@@ -26,12 +26,18 @@ const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
     small: 'text-base',
     medium: 'text-xl',
     large: 'text-3xl',
-    xlarge: 'text-5xl',
+    xlarge: 'text-5xl'
   };
 
-  return (
+   return (
     <div
       className={`${sizeClasses[size]} ${color} rounded-full flex flex-col items-center justify-center text-white font-bold shadow-2xl border-4 border-white/30 ${isAnimating ? 'animate-bounce' : ''}`}
+      style={{
+/*        transformStyle: 'preserve-3d',
+        perspective: '600px',
+        backgroundImage: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.2), rgba(0,0,0,0.2))', */
+        boxShadow: '0 20px 40px rgba(0,0,0,0.4), inset 0 -10px 20px rgba(0,0,0,0.3), inset 0 10px 20px rgba(255,255,255,0.3)'
+      }}
     >
       <div
         className={`${letterSizeClasses[size]} opacity-90 font-serif`}
@@ -43,6 +49,68 @@ const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
     </div>
   );
 };
+
+
+
+// BallComponent is your BingoBall
+const RollingBallRow = ({ balls = [], incomingBall = null, isDrawing = false,  BallComponent }) => {
+  const [rowBalls, setRowBalls] = useState([]);
+  const [droppingBall, setDroppingBall] = useState(null);
+  const prevBallsRef = useRef([]);
+
+  useEffect(() => {
+    const prev = prevBallsRef.current;
+    const latestBall = balls[balls.length - 1];
+
+    if (balls.length > prev.length && latestBall != null) {
+      // Prepend new ball
+      const updated = [latestBall, ...rowBalls];
+
+      // Animate roll + push
+      setRowBalls(updated);
+
+      // Drop oldest if >5
+      if (updated.length > 5) {
+        const toDrop = updated[5];
+        setDroppingBall(toDrop);
+
+        setTimeout(() => {
+          setRowBalls(prev => prev.slice(0, 5));
+          setDroppingBall(null);
+        }, 800); // match drop animation
+      }
+    }
+
+    prevBallsRef.current = balls;
+  }, [balls]);
+
+  return (
+    <div className="relative flex items-center gap-0 overflow-visible" style={{ perspective: '1000px' }}>
+      {rowBalls.map((num, idx) => {
+        const isDropping = droppingBall === num && idx === rowBalls.length - 1;
+
+        return (
+          <div
+            key={`${num}-${idx}`}
+            className={`absolute animate-rollPush ${isDropping ? 'animate-dropOff' : ''}`}
+            style={{
+              left: `${idx * 84}px`, // spacing for ball size + gap
+              top: '50%',
+              transform: 'translateY(-50%)',
+              transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              zIndex: 10 - idx,
+              transformStyle: 'preserve-3d'
+            }}
+          >
+            <BallComponent number={num} size="large" />
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+
 
 const BingoApp = () => {
   const [view, setView] = useState('display');
@@ -58,7 +126,7 @@ const BingoApp = () => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [recentBalls, setRecentBalls] = useState([]);
-  //const [showAllDrawn, setShowAllDrawn] = useState(false);
+  const [showAllDrawn, setShowAllDrawn] = useState(false);
   const confettiRef = useRef(null);
   const wsRef = useRef(null);
   const lastUpdateRef = useRef(0);
@@ -69,6 +137,9 @@ const BingoApp = () => {
   const POLL_INTERVAL = config.pollInterval;
   const CARD_FETCH_INTERVAL = config.cardFetchInterval;
   const GAME_ID_DEFAULT = config.gameIdDefault;
+  const [displayBalls, setDisplayBalls] = useState([]); // ADD THIS
+  const [animatingBall, setAnimatingBall] = useState(null); // ADD THIS
+  const [fallingBall, setFallingBall] = useState(null); // ADD THIS
 
   useEffect(() => {
       // Set default game ID from config if not in localStorage
@@ -101,6 +172,7 @@ const BingoApp = () => {
   // Function to update game state (used by both WS and polling)
   const updateGameState = useCallback((data, source = 'unknown') => {
     if (!data) return;
+    
     const prevLength = gameState?.drawn?.length || 0;
     const newLength = data.drawn?.length || 0;
 
@@ -108,9 +180,49 @@ const BingoApp = () => {
       const newNum = data.drawn[data.drawn.length - 1];
       setLastDrawn(newNum);
       setIsDrawing(true);
+      
+      // Update recentBalls
       setRecentBalls(prev => [...prev, newNum].slice(-5));
+      
+      // Trigger ball animation
+      setAnimatingBall(newNum);
+      
+      // After roll-in animation completes
+      setTimeout(() => {
+        setAnimatingBall(null);
+        
+        setDisplayBalls(prev => {
+          const updated = [newNum, ...prev];
+          
+          // If we have more than 5, trigger drop animation
+          if (updated.length > 5) {
+            const dropping = updated[5];
+            setFallingBall(dropping);
+            
+            // Remove falling ball after animation
+            setTimeout(() => {
+              setDisplayBalls(updated.slice(0, 5));
+              setFallingBall(null);
+            }, 700);
+            
+            return updated; // Keep all temporarily for animation
+          }
+          
+          return updated.slice(0, 5);
+        });
+      }, 800);
+      
       setTimeout(() => setIsDrawing(false), 2000);
     }
+    
+    // IMPORTANT: Reset balls on new game
+    if (data.drawn.length === 0 && gameState?.drawn?.length > 0) {
+      setDisplayBalls([]);
+      setAnimatingBall(null);
+      setFallingBall(null);
+      setRecentBalls([]);
+    }
+    
     setGameState(data);
     if (source === 'websocket') lastUpdateRef.current = Date.now();
   }, [gameState]);
@@ -385,8 +497,17 @@ const launchConfetti = useCallback(() => {
     return names[mode] || mode;
   };
 
-  // Display View - Casino Style
+useEffect(() => {
+  console.log('=== Ball Stack State ===');
+  console.log('Recent balls:', recentBalls);
+  console.log('Display balls:', displayBalls);
+  console.log('Animating:', animatingBall);
+  console.log('Falling:', fallingBall);
+  console.log('Last drawn:', lastDrawn);
+  console.log('=======================');
+}, [recentBalls, displayBalls, animatingBall, fallingBall, lastDrawn]);
 
+// Display View - Casino Style
   if (view === 'display') {
     return (
       <div className="min-h-screen bg-black text-white p-8 relative overflow-hidden">
@@ -395,59 +516,128 @@ const launchConfetti = useCallback(() => {
           <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
           <span className="text-xs text-gray-300">{wsConnected ? 'Live' : 'Polling'}</span>
         </div>
-        {/*background pattern*/}
+
+        {/* Casino Background Pattern */}
         <div className="absolute inset-0 opacity-10">
-          <div className="absolute inset-0" style={{ backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)` }}></div>
+          <div className="absolute inset-0" style={{
+            backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)`
+          }}></div>
         </div>
+
         <canvas ref={confettiRef} className="fixed inset-0 pointer-events-none z-50" />
+
         <div className="max-w-7xl mx-auto relative z-10">
+          {/* Header with Neon Effect */}
           <div className="flex justify-between items-center mb-12">
             <div className="relative">
-              <h1 className="text-8xl font-bold tracking-wider" style={{ textShadow: '0 0 20px #ff0080, 0 0 40px #ff0080, 0 0 60px #ff0080', color: '#ffed4e' }}>BINGO</h1>
+              <h1 className="text-8xl font-bold tracking-wider" style={{
+                textShadow: '0 0 20px #ff0080, 0 0 40px #ff0080, 0 0 60px #ff0080',
+                color: '#ffed4e'
+              }}>
+                BINGO
+              </h1>
               <div className="absolute -bottom-2 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 rounded"></div>
             </div>
             <div className="flex items-center gap-4">
-              <input type="text" value={gameId} onChange={(e) => setGameId(e.target.value)}
-                className="px-3 py-2 rounded bg-black/50 border border-yellow-500 text-yellow-300 focus:outline-none focus:ring-2 focus:ring-yellow-400" placeholder="Game ID" />
-              <button onClick={() => setView('admin')}
-                className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg">
+              <input
+                type="text"
+                value={gameId}
+                onChange={(e) => setGameId(e.target.value)}
+                className="px-3 py-2 rounded bg-black/50 border border-yellow-500 text-yellow-300 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Game ID"
+              />
+              <button
+                onClick={() => setView('admin')}
+                className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg"
+              >
                 <Settings className="w-6 h-6" />
               </button>
             </div>
           </div>
 
+          {/* Main Display Area */}
           {gameState && (
             <>
               <div className="mb-12 flex justify-center">
                 <div className="relative">
                   <div className="absolute inset-0 blur-3xl opacity-50 bg-gradient-to-r from-yellow-400 via-red-500 to-purple-500 animate-pulse"></div>
-                  <div className="relative bg-gradient-to-br from-gray-900 to-black border-4 border-yellow-500 rounded-3xl p-12 shadow-2xl">
+
+                  {/* Main container with proper centering */}
+                  <div className="relative bg-gradient-to-br from-gray-900 to-black border-4 border-yellow-500 rounded-3xl shadow-2xl flex items-center justify-center p-12">
                     {lastDrawn ? (
-                      <div className="flex items-center gap-8">
-                        <div className="flex flex-col items-center space-y-4">
-                          <div className="text-3xl font-bold text-yellow-400 tracking-wider">LAST CALLED</div>
-                          <BingoBall number={lastDrawn} isAnimating={isDrawing} size="xlarge" />
+                      <div className="flex items-center gap-12">
+                        {/* FIXED MAIN DRAW BOX - Never moves */}
+                        <div className="flex flex-col items-center space-y-4 flex-shrink-0">
+                          <div className="text-3xl font-bold text-yellow-400 tracking-wider">
+                            LAST CALLED
+                          </div>
+                          <BingoBall 
+                            number={lastDrawn} 
+                            isAnimating={isDrawing} 
+                            size="xlarge" 
+                          />
                         </div>
-                        {recentBalls.length > 1 && (
-                          <div className="flex items-center gap-3 ml-8">
-                            {recentBalls.slice(0, -1).reverse().map((num, idx) => {
-                              const scale = 1 - (idx * 0.15);
-                              const translateX = idx * -15;
-                              const opacity = 1 - (idx * 0.2);
-                              return (
-                                <div key={`${num}-${idx}`} style={{ transform: `scale(${scale}) translateX(${translateX}px)`, opacity: opacity,
-                                  transition: 'all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)', zIndex: 10 - idx }}>
-                                  <BingoBall number={num} size="large" />
-                                </div>
-                              );
-                            })}
+
+                        {/* ROLLING BALL STACK - Inline implementation */}
+                        {displayBalls.length > 0 && (
+                          <div className="relative h-32 flex-shrink-0" style={{ width: '500px', perspective: '1000px' }}>
+                            
+                            {/* Ball rolling in from main box */}
+                            {animatingBall && (
+                              <div
+                                className="absolute animate-rollIn"
+                                style={{
+                                  left: '-140px',
+                                  top: '50%',
+                                  transform: 'translateY(-50%)',
+                                  transformStyle: 'preserve-3d',
+                                  zIndex: 20
+                                }}
+                              >
+                                <BingoBall number={animatingBall} size="large" />
+                              </div>
+                            )}
+
+                            {/* Stack of balls */}
+                            <div className="absolute inset-0 flex items-center">
+                              {displayBalls.slice(0, 5).map((num, idx) => {
+                                const isFalling = fallingBall === num;
+                                const scale = 1 - (idx * 0.12);
+                                const translateX = idx * 100;
+                                const opacity = 1 - (idx * 0.15);
+                                
+                                return (
+                                  <div
+                                    key={`ball-${num}-${idx}`}
+                                    className={isFalling ? 'absolute animate-dropOff' : 'absolute transition-all duration-700 ease-out'}
+                                    style={{
+                                      left: `${translateX}px`,
+                                      top: '50%',
+                                      transform: isFalling 
+                                        ? 'translateY(-50%)' 
+                                        : `translateY(-50%) scale(${scale})`,
+                                      opacity: isFalling ? 1 : opacity,
+                                      zIndex: isFalling ? 1 : (10 - idx),
+                                      transformStyle: 'preserve-3d'
+                                    }}
+                                  >
+                                    <BingoBall number={num} size="large" />
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                       </div>
                     ) : gameState.drawn.length > 0 ? (
                       <div className="flex flex-col items-center space-y-4">
-                        <div className="text-3xl font-bold text-yellow-400 tracking-wider">CURRENT</div>
-                        <BingoBall number={gameState.drawn[gameState.drawn.length - 1]} size="xlarge" />
+                        <div className="text-3xl font-bold text-yellow-400 tracking-wider">
+                          CURRENT
+                        </div>
+                        <BingoBall 
+                          number={gameState.drawn[gameState.drawn.length - 1]} 
+                          size="xlarge" 
+                        />
                       </div>
                     ) : (
                       <div className="text-6xl font-bold text-gray-600">—</div>
@@ -456,38 +646,55 @@ const launchConfetti = useCallback(() => {
                 </div>
               </div>
 
-              {/* Game Info Bar */}
+              {/* Game Info Bar - unchanged */}
               <div className="mb-8 bg-gradient-to-r from-purple-900/50 to-blue-900/50 backdrop-blur-lg rounded-2xl p-6 border-2 border-yellow-500/30">
                 <div className="flex justify-between items-center">
                   <div>
-                    <div className="text-3xl font-bold text-yellow-400 mb-2">{getModeName(gameState.mode)}</div>
+                    <div className="text-3xl font-bold text-yellow-400 mb-2">
+                      {getModeName(gameState.mode)}
+                    </div>
                     {gameState.mode === 'progressive_rows' && (
-                      <div className="text-xl text-white/80">Goal: {gameState.stage} Row{gameState.stage > 1 ? 's' : ''}</div>
+                      <div className="text-xl text-white/80">
+                        Goal: {gameState.stage} Row{gameState.stage > 1 ? 's' : ''}
+                      </div>
                     )}
                   </div>
                   <div className="text-right">
                     <div className="text-xl text-white/60">Numbers Called</div>
-                    <div className="text-5xl font-bold text-green-400">{gameState.drawn.length}</div>
+                    <div className="text-5xl font-bold text-green-400">
+                      {gameState.drawn.length}
+                    </div>
                   </div>
                 </div>
               </div>
             </>
           )}
-          {celebrating && (
-            <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-40">
-              <div className="text-center">
-                <div className="animate-bounce">
-                  <Crown className="w-32 h-32 mx-auto mb-6 text-yellow-400" style={{ filter: 'drop-shadow(0 0 20px #ffd700)' }} />
-                </div>
-                <h2 className="text-9xl font-bold text-yellow-400 mb-4 animate-pulse" style={{ textShadow: '0 0 30px #ffd700, 0 0 60px #ffd700' }}>BINGO!</h2>
-                <p className="text-4xl text-white animate-pulse">We have a winner!</p>
+
+        {/* Celebration Overlay */}
+        {celebrating && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-40">
+            <div className="text-center">
+              <div className="animate-bounce">
+                <Crown
+                  className="w-32 h-32 mx-auto mb-6 text-yellow-400"
+                  style={{ filter: 'drop-shadow(0 0 20px #ffd700)' }}
+                />
               </div>
+              <h2
+                className="text-9xl font-bold text-yellow-400 mb-4 animate-pulse"
+                style={{ textShadow: '0 0 30px #ffd700, 0 0 60px #ffd700' }}
+              >
+                BINGO!
+              </h2>
+              <p className="text-4xl text-white animate-pulse">We have a winner!</p>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
-    );
-  }
+    </div>
+  );
+}
+
 
   // Admin View
   return (
@@ -784,6 +991,27 @@ const launchConfetti = useCallback(() => {
                 <div className="text-center">
                   <div className="text-3xl font-bold text-yellow-600">{gameState.status}</div>
                   <div className="text-sm text-gray-600">Status</div>
+                </div>
+                <div className="border-t pt-4">
+                  <button
+                    onClick={() => setShowAllDrawn(!showAllDrawn)}
+                    className="w-full flex justify-between items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-all"
+                  >
+                    <span className="font-semibold">View All Drawn Numbers ({gameState.drawn.length})</span>
+                    <span className="text-xl">{showAllDrawn ? '▲' : '▼'}</span>
+                  </button>
+      
+                  {showAllDrawn && (
+                    <div className="mt-4 max-h-96 overflow-y-auto border rounded-lg p-4 bg-gray-50">
+                      <div className="grid grid-cols-10 gap-2">
+                        {gameState.drawn.map((num, idx) => (
+                          <div key={`${num}-${idx}`} className="flex justify-center">
+                            <BingoBall number={num} size="small" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
