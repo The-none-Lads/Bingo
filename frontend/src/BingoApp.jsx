@@ -178,54 +178,58 @@ const BingoApp = () => {
 
     if (newLength > prevLength && data.drawn && data.drawn.length > 0) {
       const newNum = data.drawn[data.drawn.length - 1];
+      
+      // STEP 1: If there's a previous ball in lastDrawn, animate it into the stack first
+      if (lastDrawn !== null) {
+        setAnimatingBall(lastDrawn); // The PREVIOUS ball rolls in
+        
+        // STEP 2: After roll-in animation (800ms), add it to display
+        setTimeout(() => {
+          setAnimatingBall(null);
+          
+          setDisplayBalls(prev => {
+            const updated = [lastDrawn, ...prev];
+            
+            // STEP 3: If stack > 5, trigger drop animation
+            if (updated.length > 5) {
+              const dropping = updated[5];
+              setFallingBall(dropping);
+              
+              // STEP 4: Remove falling ball after animation (700ms)
+              setTimeout(() => {
+                setDisplayBalls(updated.slice(0, 5));
+                setFallingBall(null);
+              }, 700);
+              
+              return updated;
+            }
+            
+            return updated.slice(0, 5);
+          });
+        }, 800);
+      }
+      
+      // STEP 5: Set the NEW ball as lastDrawn (appears immediately in main box)
       setLastDrawn(newNum);
       setIsDrawing(true);
-      
-      // Update recentBalls
-      setRecentBalls(prev => [...prev, newNum].slice(-5));
-      
-      // Trigger ball animation
-      setAnimatingBall(newNum);
-      
-      // After roll-in animation completes
-      setTimeout(() => {
-        setAnimatingBall(null);
-        
-        setDisplayBalls(prev => {
-          const updated = [newNum, ...prev];
-          
-          // If we have more than 5, trigger drop animation
-          if (updated.length > 5) {
-            const dropping = updated[5];
-            setFallingBall(dropping);
-            
-            // Remove falling ball after animation
-            setTimeout(() => {
-              setDisplayBalls(updated.slice(0, 5));
-              setFallingBall(null);
-            }, 700);
-            
-            return updated; // Keep all temporarily for animation
-          }
-          
-          return updated.slice(0, 5);
-        });
-      }, 800);
-      
       setTimeout(() => setIsDrawing(false), 2000);
+      
+      // Update recentBalls for reference
+      setRecentBalls(prev => [...prev, newNum].slice(-5));
     }
     
-    // IMPORTANT: Reset balls on new game
+    // Reset on new game
     if (data.drawn.length === 0 && gameState?.drawn?.length > 0) {
       setDisplayBalls([]);
       setAnimatingBall(null);
       setFallingBall(null);
       setRecentBalls([]);
+      setLastDrawn(null);
     }
     
     setGameState(data);
     if (source === 'websocket') lastUpdateRef.current = Date.now();
-  }, [gameState]);
+  }, [gameState, lastDrawn]);
 
   // Function to fetch game state
   const fetchGameState = useCallback(async () => {
@@ -499,13 +503,16 @@ const launchConfetti = useCallback(() => {
 
 useEffect(() => {
   console.log('=== Ball Stack State ===');
+  console.log('Last drawn (main box):', lastDrawn);
   console.log('Recent balls:', recentBalls);
   console.log('Display balls:', displayBalls);
   console.log('Animating:', animatingBall);
   console.log('Falling:', fallingBall);
   console.log('Last drawn:', lastDrawn);
+  console.log('Total drawn:', gameState?.drawn?.length || 0);
   console.log('=======================');
-}, [recentBalls, displayBalls, animatingBall, fallingBall, lastDrawn]);
+}, [recentBalls, displayBalls, animatingBall, fallingBall, lastDrawn, gameState]);
+
 
 // Display View - Casino Style
   if (view === 'display') {
