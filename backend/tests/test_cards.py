@@ -26,34 +26,18 @@ class TestCardGeneration:
     def test_generate_75_ball_card_column_ranges(self):
         """Test that numbers are in correct column ranges."""
         card = generate_75_ball_card()
-
-        # Transpose to get columns
-        columns = [[card[row][col] for row in range(5)] for col in range(5)]
-
-        # B column: 1-15
-        for val in columns[0]:
-            if val != "FREE":
-                assert 1 <= val <= 15
-
-        # I column: 16-30
-        for val in columns[1]:
-            if val != "FREE":
-                assert 16 <= val <= 30
-
-        # N column: 31-45 (has FREE in middle)
-        for i, val in enumerate(columns[2]):
-            if val != "FREE":
-                assert 31 <= val <= 45
-
-        # G column: 46-60
-        for val in columns[3]:
-            if val != "FREE":
-                assert 46 <= val <= 60
-
-        # O column: 61-75
-        for val in columns[4]:
-            if val != "FREE":
-                assert 61 <= val <= 75
+        expected_ranges = [
+            (0, 1, 15),
+            (1, 16, 30),
+            (2, 31, 45),
+            (3, 46, 60),
+            (4, 61, 75),
+        ]
+        for col_idx, min_val, max_val in expected_ranges:
+            col_vals = [
+                card[r][col_idx] for r in range(5) if card[r][col_idx] != "FREE"
+            ]
+            assert all(isinstance(v, int) and min_val <= v <= max_val for v in col_vals)
 
     def test_generate_75_ball_card_no_duplicates(self):
         """Test that card has no duplicate numbers."""

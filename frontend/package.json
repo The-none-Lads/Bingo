@@ -7,8 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test src/__tests__/*.test.js"
   },
+
   "dependencies": {
     "tailwindcss": "^4.1.16",
     "@tailwindcss/vite": "^4.1.16",

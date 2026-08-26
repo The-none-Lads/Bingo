@@ -10,8 +10,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the backend code
 COPY backend/ .
 
+# Create non-root user and set permissions
+RUN useradd -m -u 1001 appuser && chown -R appuser:appuser /app
+USER appuser
+
 # Expose FastAPI port
 EXPOSE 8000
 
 # Run FastAPI with Uvicorn
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+

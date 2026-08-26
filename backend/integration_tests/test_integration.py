@@ -1,4 +1,6 @@
+import os
 import subprocess
+import sys
 import time
 import uuid
 
@@ -20,18 +22,46 @@ async def client(request):
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
     else:
+        # Run live uvicorn server via current python executable
+        backend_dir = os.path.join(os.path.dirname(__file__), "..")
         proc = subprocess.Popen(
-            ["uvicorn", "app:app", "--port", "8000", "--host", "127.0.0.1"],
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "app:app",
+                "--port",
+                "8000",
+                "--host",
+                "127.0.0.1",
+            ],
+            cwd=backend_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        time.sleep(1.5)
+        # Wait for server readiness
+        max_attempts = 30
+        for _ in range(max_attempts):
+            time.sleep(0.2)
+            try:
+                async with httpx.AsyncClient(
+                    base_url="http://127.0.0.1:8000"
+                ) as check_client:
+                    r = await check_client.get("/games/health-check/state")
+                    if r.status_code in (200, 404):
+                        break
+            except Exception:
+                continue
+
         try:
             async with httpx.AsyncClient(base_url="http://127.0.0.1:8000") as ac:
                 yield ac
         finally:
             proc.terminate()
-            proc.wait()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 @pytest.mark.asyncio
@@ -107,42 +137,33 @@ async def test_draw_on_nonexistent_game_returns_404(client):
     assert resp.status_code == 404
 
 
-# --- NEW CORS TESTS ---
+# --- CORS TESTS ---
 
 
 @pytest.mark.asyncio
-async def test_cors_allows_configured_origin(client, monkeypatch):
-    # Pretend we set CORS_ORIGINS to include http://test and 127.0.0.1:8000
-    monkeypatch.setenv("CORS_ORIGINS", "http://test,127.0.0.1:8000")
-
+async def test_cors_allows_configured_origin(client):
     resp = await client.options(
-        "/games/nonexistent-game/draw",
+        "/games/test-cors-game/state",
         headers={
-            "Origin": "http://test",
-            "Access-Control-Request-Method": "POST",
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
         },
     )
     assert resp.status_code == 200
-    # CORS middleware should echo back the origin
-    assert resp.headers.get("access-control-allow-origin") == "http://test"
+    # CORS middleware should allow localhost:3000
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
 @pytest.mark.asyncio
-async def test_cors_rejects_unset_origin(client, monkeypatch):
-    # Unset CORS_ORIGINS so app should fail fast or default
-    monkeypatch.delenv("CORS_ORIGINS", raising=False)
-
+async def test_cors_rejects_unauthorized_origin(client):
     resp = await client.options(
-        "/games/nonexistent-game/draw",
+        "/games/test-cors-game/state",
         headers={
-            "Origin": "http://notallowed.com",
-            "Access-Control-Request-Method": "POST",
+            "Origin": "http://malicious-site.com",
+            "Access-Control-Request-Method": "GET",
         },
     )
-    # Depending on your get_cors_origins implementation:
-    # - If you default to ["*"], then allow-origin will be "*"
-    # - If you raise RuntimeError, pytest will fail at import
-    # Adjust assertion accordingly
     assert resp.status_code in (200, 400)
-    if resp.status_code == 200:
-        assert resp.headers.get("access-control-allow-origin") in ("*", None)
+    assert (
+        resp.headers.get("access-control-allow-origin") != "http://malicious-site.com"
+    )

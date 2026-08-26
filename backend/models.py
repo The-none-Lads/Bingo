@@ -1,14 +1,28 @@
+from enum import Enum
 from typing import List, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class GameMode(str, Enum):
+    PROGRESSIVE_ROWS = "progressive_rows"
+    FULL_HOUSE = "full_house"
+    FOUR_CORNERS = "four_corners"
+    DIAGONALS = "diagonals"
+    REGULAR = "regular"
+
 
 # --- Game-related schemas ---
 
 
 class CreateGameRequest(BaseModel):
-    mode: str
-    ball_set: int
-    stage: int
+    mode: str = Field(
+        ...,
+        pattern=r"^(progressive_rows|full_house|four_corners|diagonals|regular)$",
+        description="Allowed game mode",
+    )
+    ball_set: int = Field(..., ge=1, le=100, description="Ball set size (1-100)")
+    stage: int = Field(..., ge=1, le=5, description="Progressive stage (1-5)")
 
 
 class GameStateResponse(BaseModel):
@@ -23,8 +37,14 @@ class GameStateResponse(BaseModel):
 
 
 class CardBatchRequest(BaseModel):
-    count: int
-    game_id: Optional[str]
+    count: int = Field(..., ge=1, le=500, description="Card count to generate (1-500)")
+    game_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9_\-]+$",
+        description="Optional game ID associated with the cards",
+    )
 
 
 class CardResponse(BaseModel):
@@ -38,14 +58,26 @@ class CardResponse(BaseModel):
 
 
 class ValidateRequest(BaseModel):
-    game_id: str
-    serial: str  # this will now be the public_id
+    game_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9_\-]+$",
+        description="Game ID to validate against",
+    )
+    serial: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9_\-]+$",
+        description="Card public ID / serial",
+    )
 
 
 class ValidateResponse(BaseModel):
     valid: bool
     details: dict
     drawn: List[int]
-    grid: List[List[str | int]]
+    grid: List[List[Union[str, int]]]
     public_id: str
-    type: str | None = None  # optional, so REST still works
+    type: Optional[str] = None  # optional, so REST still works

@@ -11,14 +11,15 @@ services:
   frontend:
     image: ghcr.io/the-none-lads/bingo-frontend:latest
     environment:
-      - apiBaseUrl=localhost:8000
-      - wsBaseUrl=ws://localhost:8000/ws
-      - pollInterval=20000
-      - cardFetchInterval=300000
-      - gameIdDefault=demo
-      - enableCelebration=true
-      - confettiDuration=5000
+      - API_BASE_URL=http://localhost:8000
+      - WS_BASE_URL=ws://localhost:8000/ws
+      - POLL_INTERVAL=20000
+      - CARD_FETCH_INTERVAL=300000
+      - GAME_ID_DEFAULT=demo
+      - ENABLE_CELEBRATION=true
+      - CONFETTI_DURATION=5000
 
     ports:
       - "80:80"
     restart: unless-stopped
+
