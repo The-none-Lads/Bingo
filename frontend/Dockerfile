@@ -1,5 +1,5 @@
 # ---- Build stage ----
-FROM node:25-alpine3.22 AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 
 COPY frontend/package*.json ./
