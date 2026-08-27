@@ -1,7 +1,7 @@
+import asyncio
 import os
 import subprocess
 import sys
-import time
 import uuid
 
 import httpx
@@ -24,6 +24,8 @@ async def client(request):
     else:
         # Run live uvicorn server via current python executable
         backend_dir = os.path.join(os.path.dirname(__file__), "..")
+        env = os.environ.copy()
+
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -36,22 +38,35 @@ async def client(request):
                 "127.0.0.1",
             ],
             cwd=backend_dir,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
         # Wait for server readiness
+        ready = False
         max_attempts = 30
         for _ in range(max_attempts):
-            time.sleep(0.2)
+            await asyncio.sleep(0.2)
+
             try:
                 async with httpx.AsyncClient(
-                    base_url="http://127.0.0.1:8000"
+                    base_url="http://127.0.0.1:8000",
+                    timeout=1.0,
                 ) as check_client:
                     r = await check_client.get("/games/health-check/state")
+
                     if r.status_code in (200, 404):
+                        ready = True
                         break
-            except Exception:
-                continue
+
+            except httpx.HTTPError:
+                pass
+
+        if not ready:
+            stdout, stderr = proc.communicate(timeout=1)
+            raise RuntimeError(
+                f"Uvicorn failed to start.\nSTDOUT:\n{stdout.decode()}\nSTDERR:\n{stderr.decode()}"
+            )
 
         try:
             async with httpx.AsyncClient(base_url="http://127.0.0.1:8000") as ac:
