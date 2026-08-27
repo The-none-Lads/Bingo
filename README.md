@@ -160,6 +160,7 @@ pytest tests/test_cards.py::TestCardGeneration::test_generate_75_ball_card_struc
 - `backend/tests/test_draws.py` - Draw engine tests
 - `backend/tests/test_modes.py` - Game mode validation tests
 - `backend/tests/test_api.py` - API endpoint integration tests
+- `backend/tests/test_security_hardening.py` - Input validation, admin authorization, draw concurrency/integrity, card isolation, and WebSocket security regression tests
 - `backend/integration_tests/test_integration.py` - Full integration tests
 
 **Current test coverage: 90%+**
@@ -522,11 +523,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 <details>
 <summary><strong>Backend Environment Variables</strong></summary>
 
-Required:
-- `CORS_ORIGINS` - Comma-separated list of allowed origins (e.g., `"http://localhost:3000,http://localhost:80"`)
-
-Optional:
-- `CORS_ALLOW_CREDENTIALS` - Allow credentials (default: `"true"`)
+- `CORS_ORIGINS` - Comma-separated list of allowed origins (e.g., `"http://localhost:3000,http://localhost:80"`). If unset, falls back to a safe set of common localhost origins for local development; set explicitly for production.
+- `CORS_ALLOW_CREDENTIALS` - Allow credentials (default: `"true"`). Automatically forced to `false` if `CORS_ORIGINS` is `"*"`, since browsers reject a wildcard origin combined with credentials.
+- `ADMIN_API_KEY` (or `ADMIN_SECRET`) - Optional shared secret. If set, privileged endpoints (`POST /games/{id}/start`, `POST /games/{id}/draw`, `POST /games/{id}/stage/{n}`, `POST /cards/batch`, `GET /games/{id}/cards`) require it via either the `X-Admin-Key` header or an `Authorization: Bearer <key>` header. If unset, these endpoints remain open, matching the trusted/private-install deployment model. Read-only game state and `POST /validate` never require it. The admin dashboard has an "Admin Key" field (stored locally in the browser) that sends this header automatically once entered.
+- `ENVIRONMENT` - Set to `"production"` to disable `/docs`, `/redoc`, and `/openapi.json` by default. Override either way with `ENABLE_DOCS`.
+- `CARD_DB_PATH` - Where the persistent card store's SQLite file lives (default: `data/cards.db`, relative to the backend's working directory; the Docker image mounts a volume at `/app/data`). Set to `:memory:` for a fully in-process, non-persistent store (used automatically by the test suite). Games (drawn numbers, mode, stage) remain in-memory only; cards are reusable artifacts — like a physical bingo card — and survive a backend restart and can be validated across different game sessions, not just the one they were originally generated alongside.
 </details>
 
 <details>
@@ -543,6 +544,7 @@ Runtime configuration via `config.js`:
 
 See [frontend/README.md](frontend/README.md) for complete configuration guide.
 </details>
+
 
 ## 📞 Support
 

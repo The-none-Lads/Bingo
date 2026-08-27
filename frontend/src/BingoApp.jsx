@@ -64,6 +64,12 @@ const BingoApp = () => {
   const [wsConnected, setWsConnected] = useState(false);
   const [showAllDrawn, setShowAllDrawn] = useState(false);
 
+  // Admin credential (never sent by the public display view; only used for
+  // the privileged start/draw/stage/cards-batch/cards-list requests). This
+  // is stored client-side only and is opt-in: if the backend has no
+  // ADMIN_API_KEY configured, an empty value here is simply ignored.
+  const [adminKey, setAdminKey] = useState(() => localStorage.getItem('bingo_admin_key') || '');
+
   // Authoritative Ball History State
   const [currentBall, setCurrentBall] = useState(null);
   const [historyBalls, setHistoryBalls] = useState([]);
@@ -87,6 +93,19 @@ const BingoApp = () => {
   const POLL_INTERVAL = config.pollInterval;
   const CARD_FETCH_INTERVAL = config.cardFetchInterval;
 
+  // Persist the admin key locally, mirroring the existing gameId pattern.
+  useEffect(() => {
+    localStorage.setItem('bingo_admin_key', adminKey);
+  }, [adminKey]);
+
+  // Header(s) to attach to requests that may require admin authorization.
+  // Sending an empty/absent header is harmless: the backend only enforces
+  // it when ADMIN_API_KEY is configured server-side.
+  const adminHeaders = useCallback(
+    () => (adminKey ? { 'X-Admin-Key': adminKey } : {}),
+    [adminKey]
+  );
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -101,7 +120,9 @@ const BingoApp = () => {
   // Function to fetch all cards for the current game
   const fetchCardsForGame = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/games/${gameId}/cards`);
+      const response = await fetch(`${API_BASE}/games/${gameId}/cards`, {
+        headers: adminHeaders()
+      });
       if (response.ok) {
         const data = await response.json();
         if (data.cards && data.cards.length > 0) {
@@ -111,7 +132,7 @@ const BingoApp = () => {
     } catch (err) {
       console.error('Failed to fetch cards:', err);
     }
-  }, [gameId, API_BASE]);
+  }, [gameId, API_BASE, adminHeaders]);
 
   // Pure state update based on server game state
   const updateGameState = useCallback((data, source = 'unknown') => {
@@ -356,7 +377,7 @@ const BingoApp = () => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         body: JSON.stringify({ mode, ball_set: 75, stage })
       });
       if (!wsConnected) {
@@ -369,7 +390,10 @@ const BingoApp = () => {
 
   const drawNumber = async () => {
     try {
-      await fetch(`${API_BASE}/games/${gameId}/draw`, { method: 'POST' });
+      await fetch(`${API_BASE}/games/${gameId}/draw`, {
+        method: 'POST',
+        headers: adminHeaders()
+      });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
       }
@@ -380,7 +404,10 @@ const BingoApp = () => {
 
   const setStage = async (stage) => {
     try {
-      await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { method: 'POST' });
+      await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, {
+        method: 'POST',
+        headers: adminHeaders()
+      });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
       }
@@ -393,7 +420,7 @@ const BingoApp = () => {
     try {
       const res = await fetch(`${API_BASE}/cards/batch`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         body: JSON.stringify({ count, game_id: gameId })
       });
       const data = await res.json();
@@ -664,6 +691,23 @@ const BingoApp = () => {
                   value={gameId}
                   onChange={(e) => setGameId(e.target.value)}
                   className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Admin Key
+                  <span className="ml-2 text-xs font-normal text-gray-500">
+                    (only needed if the backend has ADMIN_API_KEY configured)
+                  </span>
+                </label>
+                <input
+                  type="password"
+                  value={adminKey}
+                  onChange={(e) => setAdminKey(e.target.value)}
+                  placeholder="Leave blank for open/dev deployments"
+                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+                  autoComplete="off"
                 />
               </div>
 

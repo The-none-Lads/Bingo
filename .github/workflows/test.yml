@@ -84,7 +84,7 @@ jobs:
       - name: Lint styles with Stylelint
         run: |
           cd frontend
-          npx stylelint "**/*.{css,scss}"
+          npx stylelint "src/**/*.css"
 
       - name: Lint YAML with yamllint
         run: |

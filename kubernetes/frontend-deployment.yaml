@@ -33,4 +33,11 @@ spec:
           envFrom:
             - configMapRef:
                 name: bingo-config
+          # nginx:alpine's master process still needs root to bind port 80
+          # and manage worker processes, so runAsNonRoot is not set here
+          # (unlike the backend); these restrictions are safe regardless.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
       restartPolicy: Always

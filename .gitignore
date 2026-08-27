@@ -15,6 +15,7 @@ __pycache__*
 *.py[cod]
 *.so
 .venv/
+.venv*/
 venv/
 env/
 .mypy_cache/
@@ -43,3 +44,9 @@ Thumbs.db
 *.swp
 *~
 backend/storage/__pycache__/*
+
+# Environment files (may contain secrets; commit .env.example instead)
+.env
+.env.*
+!.env.example
+!**/.env.example

@@ -287,6 +287,15 @@ def game_state(
 # -------------------------
 
 
+# public_id is a truncated (32-bit) SHA-256 hash, so a collision between
+# two *different* cards, while rare, is not implausible at scale (birthday
+# bound). Without this guard, a collision would silently overwrite the
+# older card's stored grid/serial in db.cards, corrupting it for
+# validation. Bounds how many times we'll regenerate a fresh grid before
+# giving up.
+MAX_ID_COLLISION_RETRIES = 5
+
+
 @app.post("/cards/batch")
 async def generate_cards(
     req: CardBatchRequest,
@@ -297,6 +306,19 @@ async def generate_cards(
         grid = generate_75_ball_card()
         serial = serialize_card(grid)
         public_id = short_id(serial)
+
+        retries = 0
+        while public_id in db.cards and db.cards[public_id]["serial"] != serial:
+            retries += 1
+            if retries > MAX_ID_COLLISION_RETRIES:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Could not allocate a unique card ID; please retry",
+                )
+            grid = generate_75_ball_card()
+            serial = serialize_card(grid)
+            public_id = short_id(serial)
+
         db.set_card(
             public_id,
             {"grid": grid, "serial": serial, "game_id": req.game_id},
@@ -354,8 +376,19 @@ async def validate(req: ValidateRequest):
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
+    # Cards are reusable artifacts (like a physical bingo card): the same
+    # card can legitimately be validated against many different game
+    # sessions over time, not just the one it happened to be generated
+    # alongside. `card["game_id"]` is kept only as informational metadata
+    # (used by GET /games/{game_id}/cards to list cards issued for a
+    # particular batch/session) and is never used to gate validation.
+    # This doesn't create a win-forging risk: card content is fixed and
+    # randomly generated at creation time, independent of which game it's
+    # later checked against, so a player can only find out whether their
+    # existing card matches the current game's drawn numbers - they can't
+    # choose a card to guarantee a win.
     card = db.cards.get(req.serial)
-    if not card or (card.get("game_id") and card["game_id"] != req.game_id):
+    if not card:
         return {
             "valid": False,
             "details": {"error": "Card does not exist"},

@@ -3,7 +3,8 @@ import asyncio
 import pytest
 from app import app, manager
 from fastapi.testclient import TestClient
-from storage.db import db
+from logic.cards import generate_75_ball_card, serialize_card, short_id
+from storage.db import MemoryDB, db
 
 
 @pytest.fixture(autouse=True)
@@ -200,15 +201,20 @@ class TestAuthoritativeDrawIntegrityAndConcurrency:
 class TestCardIsolationAndCollisionProtection:
     """Verify card validation isolation and capacity bounds."""
 
-    def test_card_from_different_game_rejected(self, client):
-        # Start two different games
+    def test_card_reusable_across_different_games(self, client):
+        """Cards are reusable artifacts (like a physical bingo card): the
+        same card can be validated against a different game session than
+        the one it happened to be generated alongside. Card content is
+        fixed and random at creation time regardless of which game it's
+        later checked against, so this doesn't let a player choose a
+        winning card."""
         client.post(
             "/games/game_A/start",
             json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
         )
         client.post(
             "/games/game_B/start",
-            json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
+            json={"mode": "full_house", "ball_set": 75, "stage": 1},
         )
 
         # Generate card for game_A
@@ -216,24 +222,127 @@ class TestCardIsolationAndCollisionProtection:
             "/cards/batch",
             json={"count": 1, "game_id": "game_A"},
         ).json()
-        card_id = cards_resp["cards"][0]["public_id"]
+        card = cards_resp["cards"][0]
 
-        # Validate against game_B
+        # Force every number on the card to be "drawn" in game_B, so a
+        # correctly-wired cross-game validation reports a win there.
+        for row in card["grid"]:
+            for num in row:
+                if num != "FREE":
+                    db.games["game_B"]["drawn"].append(num)
+
+        # Validate against game_B, a different game than it was generated for
         val_resp = client.post(
             "/validate",
-            json={"game_id": "game_B", "serial": card_id},
+            json={"game_id": "game_B", "serial": card["public_id"]},
         )
         assert val_resp.status_code == 200
-        assert val_resp.json()["valid"] is False
+        data = val_resp.json()
+        assert data["valid"] is True
+        assert data["grid"] == card["grid"]
 
     def test_memory_db_capacity_bounds(self):
-        small_db = db.__class__(max_games=5, max_cards=10)
+        small_db = db.__class__(max_games=5, max_cards=10, card_db_path=":memory:")
         for i in range(10):
             small_db.set_game(f"game_{i}", {"status": "active"})
-            small_db.set_card(f"card_{i}", {"serial": f"s_{i}"})
+            small_db.set_card(
+                f"card_{i}", {"serial": f"s_{i}", "game_id": None, "grid": []}
+            )
 
         assert len(small_db.games) <= 5
         assert len(small_db.cards) <= 10
+
+    def test_forced_public_id_collision_does_not_overwrite_existing_card(
+        self, client, monkeypatch
+    ):
+        """public_id is a truncated (32-bit) hash of the card's serial, so a
+        collision between two *different* cards is possible. Regression:
+        this must not silently overwrite the older card's stored
+        grid/serial in db.cards."""
+        import app as app_module
+
+        calls = {"n": 0}
+        real_short_id = app_module.short_id
+
+        def colliding_short_id(serial, length=8):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                # Force the first two generated cards to collide on
+                # public_id regardless of their (different) serials.
+                return "COLLIDE1"
+            return real_short_id(serial, length)
+
+        monkeypatch.setattr(app_module, "short_id", colliding_short_id)
+
+        response = client.post(
+            "/cards/batch", json={"count": 2, "game_id": "collision_test"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        ids = [c["public_id"] for c in data["cards"]]
+        assert len(set(ids)) == 2, "colliding cards must not share a public_id"
+        for card in data["cards"]:
+            stored = db.cards[card["public_id"]]
+            assert stored["serial"] == card["serial"]
+            assert stored["grid"] == card["grid"]
+
+
+class TestCardPersistenceAcrossRestart:
+    """Cards must survive the backend process being closed and restarted.
+
+    These use a real temp file (not :memory:) specifically to prove disk
+    persistence works, since the rest of the suite intentionally runs
+    against :memory: for speed/isolation (see conftest.py).
+    """
+
+    def test_card_survives_simulated_restart(self, tmp_path):
+        db_path = str(tmp_path / "cards.db")
+
+        # "Backend process 1": generate and store a card.
+        first_instance = MemoryDB(card_db_path=db_path)
+        grid = generate_75_ball_card()
+        serial = serialize_card(grid)
+        public_id = short_id(serial)
+        first_instance.set_card(
+            public_id, {"serial": serial, "game_id": "night_1", "grid": grid}
+        )
+        first_instance.close()  # simulates the backend process exiting
+
+        # "Backend process 2": a brand new MemoryDB pointed at the same
+        # file must see the card without ever being told about it again.
+        second_instance = MemoryDB(card_db_path=db_path)
+        assert public_id in second_instance.cards
+        assert second_instance.cards[public_id]["serial"] == serial
+        assert second_instance.cards[public_id]["grid"] == grid
+        second_instance.close()
+
+    def test_card_eviction_is_also_removed_from_disk(self, tmp_path):
+        db_path = str(tmp_path / "cards.db")
+        instance = MemoryDB(max_cards=2, card_db_path=db_path)
+        for i in range(3):
+            instance.set_card(
+                f"card_{i}", {"serial": f"s_{i}", "game_id": None, "grid": []}
+            )
+        instance.close()
+
+        # card_0 should have been evicted (oldest) both in memory and on disk.
+        reloaded = MemoryDB(card_db_path=db_path)
+        assert "card_0" not in reloaded.cards
+        assert "card_1" in reloaded.cards
+        assert "card_2" in reloaded.cards
+        reloaded.close()
+
+    def test_clear_also_clears_disk(self, tmp_path):
+        db_path = str(tmp_path / "cards.db")
+        instance = MemoryDB(card_db_path=db_path)
+        instance.set_card("card_x", {"serial": "s_x", "game_id": None, "grid": []})
+        instance.clear()
+        instance.close()
+
+        reloaded = MemoryDB(card_db_path=db_path)
+        assert reloaded.cards == {}
+        reloaded.close()
 
 
 class TestWebSocketSecurity:

@@ -280,7 +280,15 @@ Special print styles activated via `@media print`:
 
 ## 🧪 Testing
 
-Currently, the frontend uses manual testing. Automated tests are planned.
+Automated unit tests cover the pure ball-history state logic (`src/ballHistory.js`), run via Node's built-in test runner (no extra dependency):
+
+```bash
+npm test
+```
+
+This exercises `deriveBallState`/`getBallTransition` against the documented scenarios: single draws, the 7-draw progression where history caps at 5, initial-state hydration (no replaying old draws as animations), and game reset. See `src/__tests__/ballHistory.test.js`.
+
+Beyond that, manual testing is still the primary way to verify the full UI/animation experience end-to-end:
 
 <details>
 <summary><strong>Manual Testing Checklist</strong></summary>
@@ -289,12 +297,15 @@ Currently, the frontend uses manual testing. Automated tests are planned.
 - [ ] Fallback to polling when WebSocket fails
 - [ ] Game starts in all modes
 - [ ] Numbers draw correctly
+- [ ] New draw animates: current ball rolls into history, oldest ball drops off past 5
+- [ ] Reloading mid-game hydrates current/history instantly without replaying past draws
 - [ ] Cards generate (10, 50, 100, custom)
 - [ ] Card validation works
 - [ ] Winners trigger celebration
 - [ ] Print functionality works
 - [ ] Display view shows updates
 - [ ] Admin view controls work
+- [ ] Admin Key field is sent as `X-Admin-Key` when the backend has `ADMIN_API_KEY` configured
 - [ ] Game ID persists in localStorage
 </details>
 
@@ -306,7 +317,7 @@ Currently, the frontend uses manual testing. Automated tests are planned.
 npm run lint
 
 # Run Stylelint
-npx stylelint "**/*.{css,scss}"
+npx stylelint "src/**/*.css"
 
 # Run HTMLHint
 npx htmlhint "**/*.html"
