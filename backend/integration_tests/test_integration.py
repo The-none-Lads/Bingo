@@ -142,6 +142,15 @@ async def test_draw_on_nonexistent_game_returns_404(client):
 
 @pytest.mark.asyncio
 async def test_cors_allows_configured_origin(client):
+        # Start the game
+    resp = await client.post(
+        f"/games/test-cors-game/start",
+        json={"mode": "regular", "stage": 1, "ball_set": 75},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "message" in payload
+    
     resp = await client.options(
         "/games/test-cors-game/state",
         headers={
