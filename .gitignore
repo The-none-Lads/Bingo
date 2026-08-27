@@ -50,3 +50,4 @@ backend/storage/__pycache__/*
 .env.*
 !.env.example
 !**/.env.example
+cards.db
