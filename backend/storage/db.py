@@ -61,16 +61,14 @@ class MemoryDB:
         # ever come from async endpoints on the event loop thread. The
         # lock below serializes actual SQLite access defensively.
         conn = sqlite3.connect(path, check_same_thread=False)
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS cards (
                 public_id TEXT PRIMARY KEY,
                 serial TEXT NOT NULL,
                 game_id TEXT,
                 grid TEXT NOT NULL
             )
-            """
-        )
+            """)
         conn.commit()
         return conn
 
