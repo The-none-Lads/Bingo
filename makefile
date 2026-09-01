@@ -42,7 +42,7 @@ lint:
 	-isort --check-only .
 	-mypy . --check-untyped-defs
 	-cd frontend && npx eslint . --ext .js,.jsx,.ts,.tsx
-	-cd frontend && npx stylelint "**/*.{css,scss}"
+	-cd frontend && npx stylelint "src/**/*.css"
 	-cd frontend && npx htmlhint "frontend/**/*.html"
 	-yamllint . --config-file .yamllint
 

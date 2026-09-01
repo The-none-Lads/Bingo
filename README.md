@@ -160,6 +160,7 @@ pytest tests/test_cards.py::TestCardGeneration::test_generate_75_ball_card_struc
 - `backend/tests/test_draws.py` - Draw engine tests
 - `backend/tests/test_modes.py` - Game mode validation tests
 - `backend/tests/test_api.py` - API endpoint integration tests
+- `backend/tests/test_security_hardening.py` - Input validation, admin authorization, draw concurrency/integrity, card isolation, and WebSocket security regression tests
 - `backend/integration_tests/test_integration.py` - Full integration tests
 
 **Current test coverage: 90%+**
@@ -352,11 +353,27 @@ See [frontend/README.md](frontend/README.md) for complete configuration options.
   ```json
   {
     "count": 50,
-    "game_id": "demo"
+    "game_id": "demo",
+    "persistent": false
   }
   ```
-- `GET /cards/{card_id}` - Retrieve a specific card
+  `persistent` is optional and defaults to `false`. See [Card Persistence](#card-persistence) below for what it does.
+- `GET /cards/{card_id}` - Retrieve a specific card (response includes `"persistent": true|false`)
 - `GET /games/{game_id}/cards` - Get all cards for a game
+</details>
+
+<a id="card-persistence"></a>
+<details>
+<summary><strong>Card Persistence</strong></summary>
+
+Generated cards can be **temporary** (the default) or **persistent**, decided per-request via the `persistent` field on `POST /cards/batch`:
+
+- **Temporary cards** (`persistent` omitted or `false`) are kept in memory only. They're available for as long as the backend process runs and are cleared when it restarts. Existing clients that don't send `persistent` at all keep getting exactly this behavior — nothing changes for them.
+- **Persistent cards** (`persistent: true`) are written to a small SQLite-backed store (see `CARD_DB_PATH` above) and survive a backend restart. A persistent card is a reusable artifact — like a physical bingo card — and can be validated in as many different game sessions as you like, not just the one it was generated alongside; it is never made single-use or auto-deleted after a win.
+
+Both card types share the same ID scheme, collision protection, and `/validate`/`GET /cards/{id}` endpoints — callers don't need to know or care which store a given card lives in. Use temporary cards for one-off/high-volume generation (e.g. printing 500 disposable cards for tonight's game) and persistent cards when you want to generate a batch once and reuse it across many future games.
+
+If persistent storage is requested but unavailable or at capacity, the request fails clearly (`409`/`503`) rather than silently falling back to temporary storage.
 </details>
 
 <details>
@@ -522,11 +539,14 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 <details>
 <summary><strong>Backend Environment Variables</strong></summary>
 
-Required:
-- `CORS_ORIGINS` - Comma-separated list of allowed origins (e.g., `"http://localhost:3000,http://localhost:80"`)
-
-Optional:
-- `CORS_ALLOW_CREDENTIALS` - Allow credentials (default: `"true"`)
+- `CORS_ORIGINS` - Comma-separated list of allowed origins (e.g., `"http://localhost:3000,http://localhost:80"`). If unset, falls back to a safe set of common localhost origins for local development; set explicitly for production.
+- `CORS_ALLOW_CREDENTIALS` - Allow credentials (default: `"true"`). Automatically forced to `false` if `CORS_ORIGINS` is `"*"`, since browsers reject a wildcard origin combined with credentials.
+- `ADMIN_API_KEY` (or `ADMIN_SECRET`) - Optional shared secret. If set, privileged endpoints (`POST /games/{id}/start`, `POST /games/{id}/draw`, `POST /games/{id}/stage/{n}`, `POST /cards/batch`, `GET /games/{id}/cards`) require it via either the `X-Admin-Key` header or an `Authorization: Bearer <key>` header. If unset, these endpoints remain open, matching the trusted/private-install deployment model. Read-only game state and `POST /validate` never require it. The admin dashboard has an "Admin Key" field (stored locally in the browser) that sends this header automatically once entered.
+- `ENVIRONMENT` - Set to `"production"` to disable `/docs`, `/redoc`, and `/openapi.json` by default. Override either way with `ENABLE_DOCS`.
+- `CARD_DB_PATH` - Where the persistent card store's SQLite file lives (default: `data/cards.db`, relative to the backend's working directory; the Docker image mounts a volume at `/app/data`). Set to `:memory:` for a fully in-process, non-persistent store (used automatically by the test suite). Games (drawn numbers, mode, stage) always remain in-memory only. Cards are ephemeral by default (in-memory, cleared on restart) unless a generation request explicitly opts in with `"persistent": true` — see [Card Persistence](#card-persistence) below.
+- `MAX_GAMES` - Maximum number of concurrent games kept in memory before the oldest is evicted (default: `100`).
+- `MAX_MEMORY_CARDS` - Maximum number of ephemeral (non-persistent) cards kept in memory before the oldest is evicted (default: `25000`).
+- `MAX_PERSISTENT_CARDS` - Maximum number of cards the persistent store will hold. Once reached, a request for a *new* persistent card is refused with a clear `409` error rather than evicting an already-saved card (default: `100000`).
 </details>
 
 <details>
@@ -543,6 +563,7 @@ Runtime configuration via `config.js`:
 
 See [frontend/README.md](frontend/README.md) for complete configuration guide.
 </details>
+
 
 ## 📞 Support
 
