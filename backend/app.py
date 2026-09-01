@@ -25,7 +25,7 @@ from models import (
     ValidateRequest,
     ValidateResponse,
 )
-from storage.db import db
+from storage.db import PersistentStorageFullError, PersistentStorageUnavailableError, db
 
 load_dotenv()
 
@@ -319,14 +319,33 @@ async def generate_cards(
             serial = serialize_card(grid)
             public_id = short_id(serial)
 
-        db.set_card(
-            public_id,
-            {"grid": grid, "serial": serial, "game_id": req.game_id},
+        try:
+            db.set_card(
+                public_id,
+                {"grid": grid, "serial": serial, "game_id": req.game_id},
+                persistent=req.persistent,
+            )
+        except PersistentStorageFullError as exc:
+            # Explicit persistence was requested but the persistent store
+            # is at capacity. Fail clearly rather than silently falling
+            # back to ephemeral storage for the remaining cards, since
+            # that would mean some of a batch is durable and some isn't
+            # with no way for the caller to tell which.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PersistentStorageUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        cards.append(
+            {
+                "public_id": public_id,
+                "serial": serial,
+                "grid": grid,
+                "persistent": req.persistent,
+            }
         )
-        cards.append({"public_id": public_id, "serial": serial, "grid": grid})
     if req.game_id:
         await broadcast_game_state(req.game_id)
-    return {"count": len(cards), "cards": cards}
+    return {"count": len(cards), "persistent": req.persistent, "cards": cards}
 
 
 @app.get("/cards/{public_id}", response_model=CardResponse)
@@ -337,12 +356,19 @@ def get_card(
 ):
     card = db.cards.get(public_id)
     if not card:
-        return {"exists": False, "public_id": public_id, "serial": "", "grid": []}
+        return {
+            "exists": False,
+            "public_id": public_id,
+            "serial": "",
+            "grid": [],
+            "persistent": False,
+        }
     return {
         "exists": True,
         "public_id": public_id,
         "serial": card["serial"],
         "grid": card["grid"],
+        "persistent": db.cards.is_persistent(public_id),
     }
 
 
@@ -360,6 +386,7 @@ def get_game_cards(
                     "public_id": public_id,
                     "serial": card_data["serial"],
                     "grid": card_data["grid"],
+                    "persistent": db.cards.is_persistent(public_id),
                 }
             )
     return {"count": len(game_cards), "cards": game_cards}

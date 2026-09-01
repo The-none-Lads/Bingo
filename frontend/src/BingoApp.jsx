@@ -60,6 +60,10 @@ const BingoApp = () => {
   const [generatedCards, setGeneratedCards] = useState([]);
   const [celebrating, setCelebrating] = useState(false);
   const [customCount, setCustomCount] = useState(10);
+  // Off by default: generated cards are ephemeral (in-memory) unless
+  // the operator explicitly opts into persistent storage per batch.
+  const [storePermanently, setStorePermanently] = useState(false);
+  const [lastBatchWasPersistent, setLastBatchWasPersistent] = useState(false);
   const [openCard, setOpenCard] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [showAllDrawn, setShowAllDrawn] = useState(false);
@@ -421,10 +425,11 @@ const BingoApp = () => {
       const res = await fetch(`${API_BASE}/cards/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-        body: JSON.stringify({ count, game_id: gameId })
+        body: JSON.stringify({ count, game_id: gameId, persistent: storePermanently })
       });
       const data = await res.json();
       setGeneratedCards(data.cards);
+      setLastBatchWasPersistent(Boolean(data.persistent));
       setTimeout(fetchCardsForGame, 100);
     } catch (err) {
       console.error('Failed to generate cards:', err);
@@ -797,6 +802,24 @@ const BingoApp = () => {
             </div>
 
             <div className="space-y-4">
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <input
+                  type="checkbox"
+                  id="store-permanently"
+                  checked={storePermanently}
+                  onChange={(e) => setStorePermanently(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                <label htmlFor="store-permanently" className="text-sm">
+                  <span className="font-medium">Store cards permanently</span>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    When enabled, generated cards are saved to the persistent database and remain
+                    available after server restarts. Otherwise, cards are kept in memory and are
+                    cleared when the server restarts.
+                  </p>
+                </label>
+              </div>
+
               <div className="grid grid-cols-3 gap-3">
                 <button
                   onClick={() => generateCards(10)}
@@ -840,7 +863,9 @@ const BingoApp = () => {
                   <div className="flex justify-between items-center mb-3">
                     <h3 className="font-semibold">
                       Generated Cards ({generatedCards.length})
-                      <span className="ml-2 text-xs text-gray-500">• Saved on server</span>
+                      <span className="ml-2 text-xs text-gray-500">
+                        • {lastBatchWasPersistent ? 'Saved permanently' : 'Temporary — cleared on restart'}
+                      </span>
                     </h3>
                     <button
                       onClick={() => window.print()}

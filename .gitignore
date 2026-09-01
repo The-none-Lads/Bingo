@@ -50,4 +50,10 @@ backend/storage/__pycache__/*
 .env.*
 !.env.example
 !**/.env.example
-cards.db
+
+# Persistent card store's local SQLite file (default CARD_DB_PATH); never
+# committed - each deployment/dev environment has its own.
+backend/data/
+data/
+*.db
+*.db-journal

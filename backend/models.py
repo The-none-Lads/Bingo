@@ -45,6 +45,15 @@ class CardBatchRequest(BaseModel):
         pattern=r"^[a-zA-Z0-9_\-]+$",
         description="Optional game ID associated with the cards",
     )
+    persistent: bool = Field(
+        default=False,
+        description=(
+            "If true, generated cards are saved to the persistent card "
+            "store and survive a backend restart, reusable across many "
+            "games. If false (the default), cards are kept in memory "
+            "only and are cleared when the backend restarts."
+        ),
+    )
 
 
 class CardResponse(BaseModel):
@@ -52,6 +61,7 @@ class CardResponse(BaseModel):
     public_id: str
     serial: str
     grid: List[List[Union[str, int]]]
+    persistent: bool = False
 
 
 # --- Validation schemas ---

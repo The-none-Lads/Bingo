@@ -4,7 +4,7 @@ import pytest
 from app import app, manager
 from fastapi.testclient import TestClient
 from logic.cards import generate_75_ball_card, serialize_card, short_id
-from storage.db import MemoryDB, db
+from storage.db import MemoryDB, PersistentStorageFullError, db
 
 
 @pytest.fixture(autouse=True)
@@ -299,13 +299,15 @@ class TestCardPersistenceAcrossRestart:
     def test_card_survives_simulated_restart(self, tmp_path):
         db_path = str(tmp_path / "cards.db")
 
-        # "Backend process 1": generate and store a card.
+        # "Backend process 1": generate and store a PERSISTENT card.
         first_instance = MemoryDB(card_db_path=db_path)
         grid = generate_75_ball_card()
         serial = serialize_card(grid)
         public_id = short_id(serial)
         first_instance.set_card(
-            public_id, {"serial": serial, "game_id": "night_1", "grid": grid}
+            public_id,
+            {"serial": serial, "game_id": "night_1", "grid": grid},
+            persistent=True,
         )
         first_instance.close()  # simulates the backend process exiting
 
@@ -317,32 +319,201 @@ class TestCardPersistenceAcrossRestart:
         assert second_instance.cards[public_id]["grid"] == grid
         second_instance.close()
 
-    def test_card_eviction_is_also_removed_from_disk(self, tmp_path):
+    def test_non_persistent_card_does_not_survive_restart(self, tmp_path):
+        """Regression: the default (persistent=False) must remain
+        ephemeral - a card generated without opting into persistence must
+        NOT reappear in a fresh MemoryDB instance."""
         db_path = str(tmp_path / "cards.db")
-        instance = MemoryDB(max_cards=2, card_db_path=db_path)
-        for i in range(3):
+
+        first_instance = MemoryDB(card_db_path=db_path)
+        grid = generate_75_ball_card()
+        serial = serialize_card(grid)
+        public_id = short_id(serial)
+        first_instance.set_card(
+            public_id, {"serial": serial, "game_id": "night_1", "grid": grid}
+        )  # persistent defaults to False
+        assert public_id in first_instance.cards  # available while running
+        first_instance.close()
+
+        second_instance = MemoryDB(card_db_path=db_path)
+        assert public_id not in second_instance.cards
+        second_instance.close()
+
+    def test_persistent_capacity_refuses_new_writes_without_evicting(self, tmp_path):
+        db_path = str(tmp_path / "cards.db")
+        instance = MemoryDB(max_persistent_cards=2, card_db_path=db_path)
+        for i in range(2):
             instance.set_card(
-                f"card_{i}", {"serial": f"s_{i}", "game_id": None, "grid": []}
+                f"card_{i}",
+                {"serial": f"s_{i}", "game_id": None, "grid": []},
+                persistent=True,
             )
+        # A third persistent write past capacity must be refused outright
+        # rather than silently evicting an existing durable card.
+        with pytest.raises(PersistentStorageFullError):
+            instance.set_card(
+                "card_2",
+                {"serial": "s_2", "game_id": None, "grid": []},
+                persistent=True,
+            )
+
+        assert "card_0" in instance.cards
+        assert "card_1" in instance.cards
+        assert "card_2" not in instance.cards
         instance.close()
 
-        # card_0 should have been evicted (oldest) both in memory and on disk.
         reloaded = MemoryDB(card_db_path=db_path)
-        assert "card_0" not in reloaded.cards
+        assert "card_0" in reloaded.cards
         assert "card_1" in reloaded.cards
-        assert "card_2" in reloaded.cards
+        assert "card_2" not in reloaded.cards
         reloaded.close()
+
+    def test_persistent_storage_full_raises_clear_error(self, tmp_path):
+        db_path = str(tmp_path / "cards.db")
+        instance = MemoryDB(max_persistent_cards=1, card_db_path=db_path)
+        instance.set_card(
+            "card_a", {"serial": "s_a", "game_id": None, "grid": []}, persistent=True
+        )
+        with pytest.raises(PersistentStorageFullError):
+            instance.set_card(
+                "card_b",
+                {"serial": "s_b", "game_id": None, "grid": []},
+                persistent=True,
+            )
+        instance.close()
 
     def test_clear_also_clears_disk(self, tmp_path):
         db_path = str(tmp_path / "cards.db")
         instance = MemoryDB(card_db_path=db_path)
-        instance.set_card("card_x", {"serial": "s_x", "game_id": None, "grid": []})
+        instance.set_card(
+            "card_x", {"serial": "s_x", "game_id": None, "grid": []}, persistent=True
+        )
         instance.clear()
         instance.close()
 
         reloaded = MemoryDB(card_db_path=db_path)
-        assert reloaded.cards == {}
+        assert len(reloaded.cards) == 0
         reloaded.close()
+
+
+class TestSelectableCardPersistence:
+    """API-level coverage for the `persistent` flag on POST /cards/batch.
+
+    Default (omitted or false) -> ephemeral/in-memory, cleared on restart.
+    True -> written to the durable SQLite-backed store, survives restart,
+    reusable across many games. See storage/db.py's CardRepository for
+    the underlying implementation these exercise through the real API.
+    """
+
+    def test_default_omitted_field_is_ephemeral(self, client):
+        """Existing clients that don't send `persistent` at all must keep
+        getting today's default: in-memory only."""
+        resp = client.post("/cards/batch", json={"count": 3, "game_id": "g1"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["persistent"] is False
+        for card in data["cards"]:
+            assert card["persistent"] is False
+            assert not db.cards.is_persistent(card["public_id"])
+
+    def test_explicit_false_is_ephemeral(self, client):
+        resp = client.post(
+            "/cards/batch", json={"count": 1, "game_id": "g1", "persistent": False}
+        )
+        assert resp.status_code == 200
+        card = resp.json()["cards"][0]
+        assert card["persistent"] is False
+        assert not db.cards.is_persistent(card["public_id"])
+
+    def test_persistent_true_is_written_to_durable_store(self, client):
+        resp = client.post(
+            "/cards/batch", json={"count": 1, "game_id": "g1", "persistent": True}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["persistent"] is True
+        card = data["cards"][0]
+        assert card["persistent"] is True
+        assert db.cards.is_persistent(card["public_id"])
+
+        # Retrieve it again and confirm identity/content are unchanged.
+        get_resp = client.get(f"/cards/{card['public_id']}")
+        assert get_resp.status_code == 200
+        fetched = get_resp.json()
+        assert fetched["exists"] is True
+        assert fetched["persistent"] is True
+        assert fetched["public_id"] == card["public_id"]
+        assert fetched["serial"] == card["serial"]
+        assert fetched["grid"] == card["grid"]
+
+    def test_invalid_persistent_value_rejected(self, client):
+        resp = client.post(
+            "/cards/batch",
+            json={"count": 1, "game_id": "g1", "persistent": "yes-please"},
+        )
+        assert resp.status_code == 422
+
+    def test_batch_mixes_correctly_by_request(self, client):
+        """Two separate batch requests with different `persistent` values
+        each land in the correct store."""
+        ephemeral = client.post(
+            "/cards/batch", json={"count": 5, "game_id": "g1", "persistent": False}
+        ).json()
+        persistent = client.post(
+            "/cards/batch", json={"count": 5, "game_id": "g1", "persistent": True}
+        ).json()
+
+        for card in ephemeral["cards"]:
+            assert not db.cards.is_persistent(card["public_id"])
+        for card in persistent["cards"]:
+            assert db.cards.is_persistent(card["public_id"])
+
+    def test_persistent_card_reusable_in_another_game_after_restart(self, tmp_path):
+        """End-to-end: a persistent card generated for one game, on one
+        MemoryDB instance, is still retrievable and valid for a second,
+        unrelated game after a simulated restart (fresh MemoryDB)."""
+        db_path = str(tmp_path / "cards.db")
+        first = MemoryDB(card_db_path=db_path)
+        first.set_game(
+            "night_1",
+            {"drawn": [], "mode": "full_house", "stage": 1, "status": "active"},
+        )
+
+        grid = generate_75_ball_card()
+        serial = serialize_card(grid)
+        public_id = short_id(serial)
+        first.set_card(
+            public_id,
+            {"serial": serial, "game_id": "night_1", "grid": grid},
+            persistent=True,
+        )
+        first.close()
+
+        second = MemoryDB(card_db_path=db_path)
+        second.set_game(
+            "night_2",
+            {"drawn": [], "mode": "diagonals", "stage": 1, "status": "active"},
+        )
+        for row in grid:
+            for num in row:
+                if num != "FREE":
+                    second.games["night_2"]["drawn"].append(num)
+
+        from logic.validate import validate_card
+
+        card = second.cards.get(public_id)
+        assert card is not None
+        valid, _details = validate_card(second.games["night_2"], card)
+        assert valid is True
+        second.close()
+
+    def test_persistent_full_returns_409(self, client, monkeypatch):
+        monkeypatch.setattr(db.cards, "max_persistent_cards", 0)
+        resp = client.post(
+            "/cards/batch", json={"count": 1, "game_id": "g1", "persistent": True}
+        )
+        assert resp.status_code == 409
+        assert "capacity" in resp.json()["detail"].lower()
 
 
 class TestWebSocketSecurity:
@@ -360,3 +531,31 @@ class TestWebSocketSecurity:
         cm = manager.__class__(max_connections_per_game=2, max_total_connections=3)
         assert cm.max_connections_per_game == 2
         assert cm.max_total_connections == 3
+
+
+class TestResourceBoundEnvConfig:
+    """MAX_GAMES / MAX_MEMORY_CARDS / MAX_PERSISTENT_CARDS parsing."""
+
+    def test_int_env_parses_valid_value(self, monkeypatch):
+        from storage.db import _int_env
+
+        monkeypatch.setenv("SOME_LIMIT", "42")
+        assert _int_env("SOME_LIMIT", 10) == 42
+
+    def test_int_env_falls_back_on_missing(self, monkeypatch):
+        from storage.db import _int_env
+
+        monkeypatch.delenv("SOME_LIMIT", raising=False)
+        assert _int_env("SOME_LIMIT", 10) == 10
+
+    def test_int_env_falls_back_on_invalid(self, monkeypatch):
+        from storage.db import _int_env
+
+        monkeypatch.setenv("SOME_LIMIT", "not-a-number")
+        assert _int_env("SOME_LIMIT", 10) == 10
+
+    def test_int_env_falls_back_on_empty_string(self, monkeypatch):
+        from storage.db import _int_env
+
+        monkeypatch.setenv("SOME_LIMIT", "")
+        assert _int_env("SOME_LIMIT", 10) == 10
