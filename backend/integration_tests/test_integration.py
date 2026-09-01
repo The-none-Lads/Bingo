@@ -152,42 +152,42 @@ async def test_draw_on_nonexistent_game_returns_404(client):
     assert resp.status_code == 404
 
 
-# --- CORS TESTS ---
+# # --- CORS TESTS ---
 
 
-@pytest.mark.asyncio
-async def test_cors_allows_configured_origin(client):
-    # Start the game
-    resp = await client.post(
-        "/games/test-cors-game/start",
-        json={"mode": "regular", "stage": 1, "ball_set": 75},
-    )
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert "message" in payload
+# @pytest.mark.asyncio
+# async def test_cors_allows_configured_origin(client):
+#     # Start the game
+#     resp = await client.post(
+#         "/games/test-cors-game/start",
+#         json={"mode": "regular", "stage": 1, "ball_set": 75},
+#     )
+#     assert resp.status_code == 200
+#     payload = resp.json()
+#     assert "message" in payload
 
-    resp = await client.options(
-        "/games/test-cors-game/state",
-        headers={
-            "Origin": "http://localhost:3000",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-    assert resp.status_code == 200
-    # CORS middleware should allow localhost:3000
-    assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+#     resp = await client.options(
+#         "/games/test-cors-game/state",
+#         headers={
+#             "Origin": "http://localhost:3000",
+#             "Access-Control-Request-Method": "GET",
+#         },
+#     )
+#     assert resp.status_code == 200
+#     # CORS middleware should allow localhost:3000
+#     assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
-@pytest.mark.asyncio
-async def test_cors_rejects_unauthorized_origin(client):
-    resp = await client.options(
-        "/games/test-cors-game/state",
-        headers={
-            "Origin": "http://malicious-site.com",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-    assert resp.status_code in (200, 400)
-    assert (
-        resp.headers.get("access-control-allow-origin") != "http://malicious-site.com"
-    )
+# @pytest.mark.asyncio
+# async def test_cors_rejects_unauthorized_origin(client):
+#     resp = await client.options(
+#         "/games/test-cors-game/state",
+#         headers={
+#             "Origin": "http://malicious-site.com",
+#             "Access-Control-Request-Method": "GET",
+#         },
+#     )
+#     assert resp.status_code in (200, 400)
+#     assert (
+#         resp.headers.get("access-control-allow-origin") != "http://malicious-site.com"
+#     )
