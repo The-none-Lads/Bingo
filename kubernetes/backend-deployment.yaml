@@ -7,6 +7,13 @@ metadata:
   name: backend
 spec:
   replicas: 1
+  # A ReadWriteOnce PVC (the card-data volume below) can only be mounted
+  # by one pod at a time. The default RollingUpdate strategy would try to
+  # start the new pod (to mount the volume) before terminating the old
+  # one, and get stuck. Recreate avoids that for this single-replica,
+  # volume-backed deployment.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       io.kompose.service: backend
@@ -33,4 +40,26 @@ spec:
           envFrom:
             - configMapRef:
                 name: bingo-config
+          env:
+            # Non-secret; where the backend's persistent card store
+            # (backend/storage/db.py) lives, matching the mounted volume
+            # below. Separate from bingo-config since it's specific to
+            # this deployment's volume layout, not general app config.
+            - name: CARD_DB_PATH
+              value: /app/data/cards.db
+          volumeMounts:
+            - name: card-data
+              mountPath: /app/data
+          # Matches the non-root `appuser` (uid 1001) created in
+          # backend/Dockerfile.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: card-data
+          persistentVolumeClaim:
+            claimName: backend-card-data
       restartPolicy: Always

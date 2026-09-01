@@ -1,0 +1,52 @@
+# Never bake local env files into an image layer - secrets set in a
+# developer's local .env (e.g. ADMIN_API_KEY for local testing) must not
+# end up shipped in a public/shared image. Runtime config should come from
+# the container's environment (docker-compose `environment:` / Kubernetes
+# ConfigMap/Secret), not a copied .env file.
+# NOTE: unlike .gitignore, .dockerignore does not match nested paths
+# recursively unless prefixed with **/, so both forms are listed here.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+.venv*/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.xml
+coverage.xml
+htmlcov/
+backend/tests/
+backend/integration_tests/
+
+# Node / Frontend
+node_modules/
+**/node_modules/
+dist/
+build/
+.cache/
+*.log
+
+# VCS / IDE / OS
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Docs (not needed inside the image)
+README.md
+frontend/README.md

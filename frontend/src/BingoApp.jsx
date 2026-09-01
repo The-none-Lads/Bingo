@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
-import {config} from './config';
+import { config } from './config';
+import { getBallTransition } from './ballHistory';
 
 // Helper function to get letter and color for a number
 const getBingoLetter = (num) => {
@@ -12,7 +13,7 @@ const getBingoLetter = (num) => {
   return { letter: '', color: 'bg-gray-500' };
 };
 
-// Animated Bingo Ball Component
+// Reusable Bingo Ball Component
 const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
   const { letter, color } = getBingoLetter(number);
 
@@ -20,77 +21,112 @@ const BingoBall = ({ number, isAnimating = false, size = 'large' }) => {
     small: 'w-12 h-12 text-sm',
     medium: 'w-20 h-20 text-xl',
     large: 'w-32 h-32 text-4xl',
-    xlarge: 'w-48 h-48 text-6xl'
+    xlarge: 'w-44 h-44 text-6xl'
   };
   const letterSizeClasses = {
-    small: 'text-base',
-    medium: 'text-xl',
-    large: 'text-3xl',
-    xlarge: 'text-5xl',
+    small: 'text-xs',
+    medium: 'text-base',
+    large: 'text-2xl',
+    xlarge: 'text-4xl'
   };
 
   return (
     <div
-      className={`${sizeClasses[size]} ${color} rounded-full flex flex-col items-center justify-center text-white font-bold shadow-2xl border-4 border-white/30 ${isAnimating ? 'animate-bounce' : ''}`}
+      className={`${sizeClasses[size]} ${color} rounded-full flex flex-col items-center justify-center text-white font-bold shadow-2xl border-4 border-white/30 transition-transform ${
+        isAnimating ? 'animate-ballPop' : ''
+      }`}
+      style={{
+        boxShadow:
+          '0 20px 40px rgba(0,0,0,0.4), inset 0 -10px 20px rgba(0,0,0,0.3), inset 0 10px 20px rgba(255,255,255,0.3)'
+      }}
     >
       <div
-        className={`${letterSizeClasses[size]} opacity-90 font-serif`}
+        className={`${letterSizeClasses[size]} opacity-90 font-serif leading-none`}
         style={{ fontFamily: '"Georgia", "Times New Roman", serif' }}
       >
         {letter}
       </div>
-      <div>{number}</div>
+      <div className="leading-none mt-1">{number}</div>
     </div>
   );
 };
 
 const BingoApp = () => {
   const [view, setView] = useState('display');
-  const [gameId, setGameId] = useState(() => {
-    return localStorage.getItem('bingo_game_id') || 'demo';
-  });
+  const [gameId, setGameId] = useState(() => localStorage.getItem('bingo_game_id') || config.gameIdDefault || 'demo');
   const [gameState, setGameState] = useState(null);
-  const [lastDrawn, setLastDrawn] = useState(null);
   const [validationResult, setValidationResult] = useState(null);
   const [cardToValidate, setCardToValidate] = useState('');
   const [generatedCards, setGeneratedCards] = useState([]);
   const [celebrating, setCelebrating] = useState(false);
-  const confettiRef = useRef(null);
   const [customCount, setCustomCount] = useState(10);
+  // Off by default: generated cards are ephemeral (in-memory) unless
+  // the operator explicitly opts into persistent storage per batch.
+  const [storePermanently, setStorePermanently] = useState(false);
+  const [lastBatchWasPersistent, setLastBatchWasPersistent] = useState(false);
   const [openCard, setOpenCard] = useState(null);
-  const [isDrawing, setIsDrawing] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
+  const [showAllDrawn, setShowAllDrawn] = useState(false);
+
+  // Admin credential (never sent by the public display view; only used for
+  // the privileged start/draw/stage/cards-batch/cards-list requests). This
+  // is stored client-side only and is opt-in: if the backend has no
+  // ADMIN_API_KEY configured, an empty value here is simply ignored.
+  const [adminKey, setAdminKey] = useState(() => localStorage.getItem('bingo_admin_key') || '');
+
+  // Authoritative Ball History State
+  const [currentBall, setCurrentBall] = useState(null);
+  const [historyBalls, setHistoryBalls] = useState([]);
+  const [animatingBall, setAnimatingBall] = useState(null);
+  const [droppingBall, setDroppingBall] = useState(null);
+  const [isNewDrawAnimating, setIsNewDrawAnimating] = useState(false);
+
+  // References for lifecycle and socket management
+  const prevDrawnRef = useRef([]);
+  const animationTimerRef = useRef(null);
+  const confettiAnimIdRef = useRef(null);
+  const confettiTimeoutRef = useRef(null);
+  const confettiRef = useRef(null);
   const wsRef = useRef(null);
   const lastUpdateRef = useRef(0);
   const pollIntervalRef = useRef(null);
   const cardIntervalRef = useRef(null);
+
   const API_BASE = config.apiBaseUrl;
   const WS_BASE = config.wsBaseUrl;
   const POLL_INTERVAL = config.pollInterval;
   const CARD_FETCH_INTERVAL = config.cardFetchInterval;
-  const GAME_ID_DEFAULT = config.gameIdDefault;
-  const ENABLE_CELEBRATION = config.enableCelebration;
-  const CONFETTI_DURATION = config.confettiDuration;
-  //const [config, setConfig] = useState(null);
-  //const [configLoaded, setConfigLoaded] = useState(false);
 
+  // Persist the admin key locally, mirroring the existing gameId pattern.
   useEffect(() => {
-      // Set default game ID from config if not in localStorage
-      const storedGameId = localStorage.getItem('bingo_game_id');
-      if (!storedGameId) {
-        setGameId(GAME_ID_DEFAULT);
-      }
-    }, [GAME_ID_DEFAULT]);
+    localStorage.setItem('bingo_admin_key', adminKey);
+  }, [adminKey]);
 
-  // Continue rendering hooks even if config isn't loaded; use safe defaults below.
-  
+  // Header(s) to attach to requests that may require admin authorization.
+  // Sending an empty/absent header is harmless: the backend only enforces
+  // it when ADMIN_API_KEY is configured server-side.
+  const adminHeaders = useCallback(
+    () => (adminKey ? { 'X-Admin-Key': adminKey } : {}),
+    [adminKey]
+  );
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (animationTimerRef.current) clearTimeout(animationTimerRef.current);
+      if (confettiAnimIdRef.current) cancelAnimationFrame(confettiAnimIdRef.current);
+      if (confettiTimeoutRef.current) clearTimeout(confettiTimeoutRef.current);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (cardIntervalRef.current) clearInterval(cardIntervalRef.current);
+    };
+  }, []);
 
   // Function to fetch all cards for the current game
   const fetchCardsForGame = useCallback(async () => {
-    // Use safe defaults so hooks can be declared unconditionally
     try {
-      const response = await fetch(`${API_BASE}/games/${gameId}/cards`);
+      const response = await fetch(`${API_BASE}/games/${gameId}/cards`, {
+        headers: adminHeaders()
+      });
       if (response.ok) {
         const data = await response.json();
         if (data.cards && data.cards.length > 0) {
@@ -100,28 +136,60 @@ const BingoApp = () => {
     } catch (err) {
       console.error('Failed to fetch cards:', err);
     }
-  }, [gameId, API_BASE]);
+  }, [gameId, API_BASE, adminHeaders]);
 
-  // Function to update game state (used by both WS and polling)
+  // Pure state update based on server game state
   const updateGameState = useCallback((data, source = 'unknown') => {
     if (!data) return;
 
-    const prevLength = gameState?.drawn?.length || 0;
-    const newLength = data.drawn?.length || 0;
+    const currentDrawn = data.drawn || [];
+    const transition = getBallTransition(prevDrawnRef.current, currentDrawn);
 
-    if (newLength > prevLength && data.drawn && data.drawn.length > 0) {
-      const newNum = data.drawn[data.drawn.length - 1];
-      setLastDrawn(newNum);
-      setIsDrawing(true);
-      setTimeout(() => setIsDrawing(false), 2000);
+    if (transition.type === 'hydrate') {
+      setCurrentBall(transition.current);
+      setHistoryBalls(transition.history);
+      setAnimatingBall(null);
+      setDroppingBall(null);
+      setIsNewDrawAnimating(false);
+    } else if (transition.type === 'draw') {
+      if (animationTimerRef.current) {
+        clearTimeout(animationTimerRef.current);
+      }
+
+      // Show new main ball with pop effect
+      setCurrentBall(transition.current);
+      setIsNewDrawAnimating(true);
+
+      // Roll old current into history position 0
+      setAnimatingBall(transition.oldCurrent);
+      if (transition.droppingBall !== null) {
+        setDroppingBall(transition.droppingBall);
+      }
+
+      // Settle visual history after animation completes (750ms)
+      animationTimerRef.current = setTimeout(() => {
+        setHistoryBalls(transition.history);
+        setAnimatingBall(null);
+        setDroppingBall(null);
+        setIsNewDrawAnimating(false);
+      }, 750);
+    } else if (transition.type === 'reset') {
+      if (animationTimerRef.current) {
+        clearTimeout(animationTimerRef.current);
+      }
+      setCurrentBall(null);
+      setHistoryBalls([]);
+      setAnimatingBall(null);
+      setDroppingBall(null);
+      setIsNewDrawAnimating(false);
     }
 
+    prevDrawnRef.current = currentDrawn;
     setGameState(data);
-
     if (source === 'websocket') {
       lastUpdateRef.current = Date.now();
     }
-  }, [gameState]);
+  }, []);
 
   // Function to fetch game state
   const fetchGameState = useCallback(async () => {
@@ -139,18 +207,31 @@ const BingoApp = () => {
     }
   }, [gameId, wsConnected, updateGameState, API_BASE]);
 
-  // Save gameId to localStorage when it changes and fetch cards
+  // Handle Game ID change
   useEffect(() => {
     localStorage.setItem('bingo_game_id', gameId);
+    prevDrawnRef.current = [];
+    setCurrentBall(null);
+    setHistoryBalls([]);
+    setAnimatingBall(null);
+    setDroppingBall(null);
     fetchCardsForGame();
-  }, [gameId, fetchCardsForGame]);
+    fetchGameState();
+  }, [gameId, fetchCardsForGame, fetchGameState]);
 
-  // Confetti Animation before it gets called because for some reason I broke it by changing something else so now it is here :(
-const launchConfetti = useCallback(() => {
+  // Confetti Animation with safe cleanup
+  const launchConfetti = useCallback(() => {
     if (!config.enableCelebration) return;
 
     const canvas = confettiRef.current;
     if (!canvas) return;
+
+    if (confettiAnimIdRef.current) {
+      cancelAnimationFrame(confettiAnimIdRef.current);
+    }
+    if (confettiTimeoutRef.current) {
+      clearTimeout(confettiTimeoutRef.current);
+    }
 
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
@@ -166,10 +247,9 @@ const launchConfetti = useCallback(() => {
       rotationSpeed: Math.random() * 6 - 3
     }));
 
-    let animationId;
     const draw = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      pieces.forEach(p => {
+      pieces.forEach((p) => {
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate((p.rotation * Math.PI) / 180);
@@ -184,33 +264,36 @@ const launchConfetti = useCallback(() => {
           p.x = Math.random() * canvas.width;
         }
       });
-      animationId = requestAnimationFrame(draw);
+      confettiAnimIdRef.current = requestAnimationFrame(draw);
     };
 
     draw();
-    setTimeout(() => {
-      if (animationId) cancelAnimationFrame(animationId);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }, 5000);
+    confettiTimeoutRef.current = setTimeout(() => {
+      if (confettiAnimIdRef.current) {
+        cancelAnimationFrame(confettiAnimIdRef.current);
+        confettiAnimIdRef.current = null;
+      }
+      if (canvas && ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }, config.confettiDuration || 5000);
   }, []);
 
-  // WebSocket connection
+  // WebSocket connection lifecycle
   useEffect(() => {
-    const ws = new WebSocket(`${config.wsBaseUrl}/ws/${gameId}`);
+    const wsUrl = `${WS_BASE}/${gameId}`;
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log('✅ WebSocket connected');
       setWsConnected(true);
     };
 
     ws.onclose = () => {
-      console.log('❌ WebSocket disconnected');
       setWsConnected(false);
     };
 
     ws.onerror = () => {
-      console.log('⚠️ WebSocket error');
       setWsConnected(false);
     };
 
@@ -218,17 +301,17 @@ const launchConfetti = useCallback(() => {
       try {
         const data = JSON.parse(event.data);
 
-        if (data && data.type === "state_update" && data.state) {
+        if (data && data.type === 'state_update' && data.state) {
           updateGameState(data.state, 'websocket');
         }
 
-        if (data && data.type === "celebration") {
+        if (data && data.type === 'celebration') {
           setCelebrating(true);
           launchConfetti();
-          setTimeout(() => setCelebrating(false), 5000);
+          setTimeout(() => setCelebrating(false), config.confettiDuration || 5000);
         }
       } catch (err) {
-        console.error('WebSocket message error:', err);
+        console.error('WebSocket message parse error:', err);
       }
     };
 
@@ -237,41 +320,37 @@ const launchConfetti = useCallback(() => {
         wsRef.current.close();
       }
     };
-  }, [gameId, WS_BASE, launchConfetti]);
+  }, [gameId, WS_BASE, updateGameState, launchConfetti]);
 
-  // Polling as fallback
+  // Polling as fallback when WebSocket is inactive
   useEffect(() => {
-    if (wsConnected) return; // skip polling if WS is active
+    if (wsConnected) return;
 
-    // Set up polling interval
     pollIntervalRef.current = setInterval(async () => {
       await fetchGameState();
 
-      // After polling, check if WS is closed and try reconnect
+      // Check if WebSocket is closed and attempt reconnect
       if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
-        console.log("🔄 Attempting reconnect after poll...");
-        const ws = new WebSocket(`${config.wsBaseUrl}/ws/${gameId}`);
+        const wsUrl = `${config.wsBaseUrl}/${gameId}`;
+        const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
-        ws.onopen = () => {
-          console.log("✅ WebSocket reconnected");
-          setWsConnected(true);
-        };
+        ws.onopen = () => setWsConnected(true);
         ws.onclose = () => setWsConnected(false);
         ws.onerror = () => setWsConnected(false);
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data?.type === "state_update" && data.state) {
-              updateGameState(data.state, "websocket");
+            if (data?.type === 'state_update' && data.state) {
+              updateGameState(data.state, 'websocket');
             }
-            if (data?.type === "celebration") {
+            if (data?.type === 'celebration') {
               setCelebrating(true);
               launchConfetti();
-              setTimeout(() => setCelebrating(false), 5000);
+              setTimeout(() => setCelebrating(false), config.confettiDuration || 5000);
             }
           } catch (err) {
-            console.error("WebSocket message error:", err);
+            console.error('WebSocket message parse error:', err);
           }
         };
       }
@@ -285,11 +364,8 @@ const launchConfetti = useCallback(() => {
     };
   }, [gameId, wsConnected, fetchGameState, updateGameState, POLL_INTERVAL, launchConfetti]);
 
-
-  // update cards on page load and after 1 minute
+  // Periodic card fetch
   useEffect(() => {
-
-    // Set up polling interval
     cardIntervalRef.current = setInterval(() => {
       fetchCardsForGame();
     }, CARD_FETCH_INTERVAL);
@@ -299,16 +375,15 @@ const launchConfetti = useCallback(() => {
         clearInterval(cardIntervalRef.current);
       }
     };
-  }, [gameId, wsConnected, fetchCardsForGame, CARD_FETCH_INTERVAL]);
+  }, [fetchCardsForGame, CARD_FETCH_INTERVAL]);
 
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         body: JSON.stringify({ mode, ball_set: 75, stage })
       });
-      // Force immediate update
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
       }
@@ -319,8 +394,10 @@ const launchConfetti = useCallback(() => {
 
   const drawNumber = async () => {
     try {
-      await fetch(`${API_BASE}/games/${gameId}/draw`, { method: 'POST' });
-      // Force immediate update
+      await fetch(`${API_BASE}/games/${gameId}/draw`, {
+        method: 'POST',
+        headers: adminHeaders()
+      });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
       }
@@ -331,7 +408,10 @@ const launchConfetti = useCallback(() => {
 
   const setStage = async (stage) => {
     try {
-      await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, { method: 'POST' });
+      await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, {
+        method: 'POST',
+        headers: adminHeaders()
+      });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
       }
@@ -344,12 +424,12 @@ const launchConfetti = useCallback(() => {
     try {
       const res = await fetch(`${API_BASE}/cards/batch`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count, game_id: gameId })
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        body: JSON.stringify({ count, game_id: gameId, persistent: storePermanently })
       });
       const data = await res.json();
       setGeneratedCards(data.cards);
-      // Also refetch to get the complete list
+      setLastBatchWasPersistent(Boolean(data.persistent));
       setTimeout(fetchCardsForGame, 100);
     } catch (err) {
       console.error('Failed to generate cards:', err);
@@ -375,13 +455,12 @@ const launchConfetti = useCallback(() => {
       if (data.valid) {
         setCelebrating(true);
         launchConfetti();
-        setTimeout(() => setCelebrating(false), 5000);
+        setTimeout(() => setCelebrating(false), config.confettiDuration || 5000);
       }
     } catch (err) {
       console.error('Failed to validate:', err);
     }
   };
-
 
   const getModeName = (mode) => {
     const names = {
@@ -393,8 +472,7 @@ const launchConfetti = useCallback(() => {
     return names[mode] || mode;
   };
 
-  // Display View - Casino Style
-
+  // Display View - Casino Style with 5-Ball History
   if (view === 'display') {
     return (
       <div className="min-h-screen bg-black text-white p-8 relative overflow-hidden">
@@ -405,10 +483,13 @@ const launchConfetti = useCallback(() => {
         </div>
 
         {/* Casino Background Pattern */}
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute inset-0" style={{
-            backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)`
-          }}></div>
+        <div className="absolute inset-0 opacity-10 pointer-events-none">
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)`
+            }}
+          ></div>
         </div>
 
         <canvas ref={confettiRef} className="fixed inset-0 pointer-events-none z-50" />
@@ -417,10 +498,13 @@ const launchConfetti = useCallback(() => {
           {/* Header with Neon Effect */}
           <div className="flex justify-between items-center mb-12">
             <div className="relative">
-              <h1 className="text-8xl font-bold tracking-wider" style={{
-                textShadow: '0 0 20px #ff0080, 0 0 40px #ff0080, 0 0 60px #ff0080',
-                color: '#ffed4e'
-              }}>
+              <h1
+                className="text-8xl font-bold tracking-wider"
+                style={{
+                  textShadow: '0 0 20px #ff0080, 0 0 40px #ff0080, 0 0 60px #ff0080',
+                  color: '#ffed4e'
+                }}
+              >
                 BINGO
               </h1>
               <div className="absolute -bottom-2 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 rounded"></div>
@@ -442,27 +526,81 @@ const launchConfetti = useCallback(() => {
             </div>
           </div>
 
+          {/* Main Display Area */}
           {gameState && (
             <>
-              {/* Current Ball Display - Center Stage */}
-              <div className="mb-12 flex justify-center">
-                <div className="relative">
-                  <div className="absolute inset-0 blur-3xl opacity-50 bg-gradient-to-r from-yellow-400 via-red-500 to-purple-500 animate-pulse"></div>
+              <div className="mb-12 flex flex-col items-center">
+                <div className="relative w-full max-w-4xl">
+                  {/* Neon pulsing glow backdrop */}
+                  <div className="absolute inset-0 blur-3xl opacity-50 bg-gradient-to-r from-yellow-400 via-red-500 to-purple-500 animate-pulse pointer-events-none"></div>
 
-                  <div className="relative bg-gradient-to-br from-gray-900 to-black border-4 border-yellow-500 rounded-3xl p-12 shadow-2xl">
-                    {lastDrawn ? (
-                      <div className="flex flex-col items-center space-y-4">
-                        <div className="text-3xl font-bold text-yellow-400 tracking-wider">LAST CALLED</div>
-                        <BingoBall number={lastDrawn} isAnimating={isDrawing} size="xlarge" />
+                  {/* Main Casino Box */}
+                  <div className="relative bg-gradient-to-br from-gray-900 via-black to-gray-950 border-4 border-yellow-500 rounded-3xl shadow-2xl p-8 flex flex-col items-center">
+                    {/* CURRENT BALL (Newest Draw) */}
+                    <div className="flex flex-col items-center mb-8">
+                      <div className="text-2xl font-extrabold text-yellow-400 tracking-widest uppercase mb-4 flex items-center gap-2">
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 animate-ping"></span>
+                        CURRENT BALL
                       </div>
-                    ) : gameState.drawn.length > 0 ? (
-                      <div className="flex flex-col items-center space-y-4">
-                        <div className="text-3xl font-bold text-yellow-400 tracking-wider">CURRENT</div>
-                        <BingoBall number={gameState.drawn[gameState.drawn.length - 1]} size="xlarge" />
+
+                      {currentBall !== null ? (
+                        <div className="relative flex items-center justify-center p-2">
+                          <BingoBall
+                            number={currentBall}
+                            isAnimating={isNewDrawAnimating}
+                            size="xlarge"
+                          />
+                        </div>
+                      ) : (
+                        <div className="w-44 h-44 rounded-full border-4 border-dashed border-gray-700 flex items-center justify-center text-4xl text-gray-600 font-bold">
+                          —
+                        </div>
+                      )}
+                    </div>
+
+                    {/* RECENTLY DRAWN (Up to 5 Previous Draws) */}
+                    <div className="w-full flex flex-col items-center border-t border-gray-800 pt-6">
+                      <div className="text-sm font-bold text-gray-400 tracking-wider uppercase mb-4">
+                        RECENTLY DRAWN
                       </div>
-                    ) : (
-                      <div className="text-6xl font-bold text-gray-600">—</div>
-                    )}
+
+                      <div className="relative flex items-center justify-center gap-4 min-h-[96px] w-full px-4 overflow-visible">
+                        {/* Transitioning ball rolling from main position into history slot 0 */}
+                        {animatingBall !== null && (
+                          <div
+                            key={`anim-ball-${animatingBall}`}
+                            className="animate-rollIn z-20 flex-shrink-0"
+                          >
+                            <BingoBall number={animatingBall} size="medium" />
+                          </div>
+                        )}
+
+                        {/* Stable history balls (never includes currentBall) */}
+                        {historyBalls.length > 0 ? (
+                          historyBalls.map((num, idx) => {
+                            const isDropping = droppingBall === num && idx === historyBalls.length - 1;
+                            return (
+                              <div
+                                key={`hist-ball-${num}`}
+                                className={`transition-all duration-700 ease-out flex-shrink-0 ${
+                                  isDropping ? 'animate-dropOff' : ''
+                                }`}
+                                style={{
+                                  opacity: isDropping ? 0.3 : Math.max(0.4, 1 - idx * 0.12),
+                                  transform: `scale(${Math.max(0.75, 1 - idx * 0.05)})`,
+                                }}
+                              >
+                                <BingoBall number={num} size="medium" />
+                              </div>
+                            );
+                          })
+                        ) : animatingBall === null ? (
+                          <div className="text-gray-600 italic text-sm py-4">
+                            No previous balls drawn yet
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -488,45 +626,23 @@ const launchConfetti = useCallback(() => {
                   </div>
                 </div>
               </div>
-
-              {/* Bingo Board with Balls */}
-              <div className="grid grid-cols-15 gap-2 mb-8">
-                {['B', 'I', 'N', 'G', 'O'].map((letter, colIdx) => (
-                  <React.Fragment key={letter}>
-                    {Array.from({ length: 15 }, (_, i) => {
-                      const num = colIdx * 15 + i + 1;
-                      const drawn = gameState.drawn.includes(num);
-                      const isLast = num === lastDrawn;
-
-                      return (
-                        <div key={num} className="col-span-3 flex justify-center">
-                          {drawn ? (
-                            <BingoBall number={num} isAnimating={isLast} size="medium" />
-                          ) : (
-                            <div className="w-20 h-20 rounded-full bg-gray-800/50 border-2 border-gray-700 flex items-center justify-center text-gray-600 font-bold text-xl">
-                              {num}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </React.Fragment>
-                ))}
-              </div>
             </>
           )}
 
+          {/* Celebration Overlay */}
           {celebrating && (
             <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-40">
               <div className="text-center">
                 <div className="animate-bounce">
-                  <Crown className="w-32 h-32 mx-auto mb-6 text-yellow-400" style={{
-                    filter: 'drop-shadow(0 0 20px #ffd700)'
-                  }} />
+                  <Crown
+                    className="w-32 h-32 mx-auto mb-6 text-yellow-400"
+                    style={{ filter: 'drop-shadow(0 0 20px #ffd700)' }}
+                  />
                 </div>
-                <h2 className="text-9xl font-bold text-yellow-400 mb-4 animate-pulse" style={{
-                  textShadow: '0 0 30px #ffd700, 0 0 60px #ffd700'
-                }}>
+                <h2
+                  className="text-9xl font-bold text-yellow-400 mb-4 animate-pulse"
+                  style={{ textShadow: '0 0 30px #ffd700, 0 0 60px #ffd700' }}
+                >
                   BINGO!
                 </h2>
                 <p className="text-4xl text-white animate-pulse">We have a winner!</p>
@@ -545,8 +661,14 @@ const launchConfetti = useCallback(() => {
         <div className="flex justify-between items-center mb-8">
           <div className="flex items-center gap-4">
             <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
-            <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${wsConnected ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-              <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`}></div>
+            <div
+              className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
+                wsConnected ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+              }`}
+            >
+              <div
+                className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`}
+              ></div>
               {wsConnected ? 'Connected' : 'Polling Mode'}
             </div>
           </div>
@@ -574,6 +696,23 @@ const launchConfetti = useCallback(() => {
                   value={gameId}
                   onChange={(e) => setGameId(e.target.value)}
                   className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Admin Key
+                  <span className="ml-2 text-xs font-normal text-gray-500">
+                    (only needed if the backend has ADMIN_API_KEY configured)
+                  </span>
+                </label>
+                <input
+                  type="password"
+                  value={adminKey}
+                  onChange={(e) => setAdminKey(e.target.value)}
+                  placeholder="Leave blank for open/dev deployments"
+                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+                  autoComplete="off"
                 />
               </div>
 
@@ -611,12 +750,12 @@ const launchConfetti = useCallback(() => {
                 Draw Number
               </button>
 
-              {lastDrawn && (
+              {currentBall !== null && (
                 <div className="bg-gradient-to-r from-purple-100 to-blue-100 rounded-lg p-4 border-2 border-purple-300">
                   <div className="text-center">
                     <div className="text-sm font-semibold text-gray-600 mb-2">Last Drawn</div>
                     <div className="flex justify-center">
-                      <BingoBall number={lastDrawn} size="medium" />
+                      <BingoBall number={currentBall} size="medium" />
                     </div>
                   </div>
                 </div>
@@ -626,14 +765,15 @@ const launchConfetti = useCallback(() => {
                 <div>
                   <label className="block text-sm font-medium mb-2">Set Stage (Required Rows)</label>
                   <div className="grid grid-cols-5 gap-2">
-                    {[1, 2, 3, 4, 5].map(stage => (
+                    {[1, 2, 3, 4, 5].map((stage) => (
                       <button
                         key={stage}
                         onClick={() => setStage(stage)}
-                        className={`px-4 py-2 rounded-lg transition-all ${gameState?.stage === stage
-                          ? 'bg-purple-600 text-white'
-                          : 'bg-gray-200 hover:bg-gray-300'
-                          }`}
+                        className={`px-4 py-2 rounded-lg transition-all ${
+                          gameState?.stage === stage
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-gray-200 hover:bg-gray-300'
+                        }`}
                       >
                         {stage}
                       </button>
@@ -662,6 +802,24 @@ const launchConfetti = useCallback(() => {
             </div>
 
             <div className="space-y-4">
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <input
+                  type="checkbox"
+                  id="store-permanently"
+                  checked={storePermanently}
+                  onChange={(e) => setStorePermanently(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                <label htmlFor="store-permanently" className="text-sm">
+                  <span className="font-medium">Store cards permanently</span>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    When enabled, generated cards are saved to the persistent database and remain
+                    available after server restarts. Otherwise, cards are kept in memory and are
+                    cleared when the server restarts.
+                  </p>
+                </label>
+              </div>
+
               <div className="grid grid-cols-3 gap-3">
                 <button
                   onClick={() => generateCards(10)}
@@ -687,9 +845,9 @@ const launchConfetti = useCallback(() => {
                 <input
                   type="number"
                   value={customCount}
-                  onChange={e => setCustomCount(parseInt(e.target.value) || 1)}
+                  onChange={(e) => setCustomCount(parseInt(e.target.value, 10) || 1)}
                   min={1}
-                  max={200}
+                  max={500}
                   className="border p-2 rounded w-24"
                 />
                 <button
@@ -705,7 +863,9 @@ const launchConfetti = useCallback(() => {
                   <div className="flex justify-between items-center mb-3">
                     <h3 className="font-semibold">
                       Generated Cards ({generatedCards.length})
-                      <span className="ml-2 text-xs text-gray-500">• Saved on server</span>
+                      <span className="ml-2 text-xs text-gray-500">
+                        • {lastBatchWasPersistent ? 'Saved permanently' : 'Temporary — cleared on restart'}
+                      </span>
                     </h3>
                     <button
                       onClick={() => window.print()}
@@ -716,7 +876,7 @@ const launchConfetti = useCallback(() => {
                   </div>
 
                   <div className="space-y-2">
-                    {generatedCards.map(card => (
+                    {generatedCards.map((card) => (
                       <div key={card.public_id} className="border rounded shadow">
                         <div
                           className="cursor-pointer bg-gray-100 p-2 font-bold hover:bg-gray-200"
@@ -727,10 +887,19 @@ const launchConfetti = useCallback(() => {
                         {openCard === card.public_id && (
                           <div className="p-4">
                             <div className="grid grid-cols-5 gap-1">
-                              {["B", "I", "N", "G", "O"].map((letter, idx) => {
-                                const colors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-purple-500'];
+                              {['B', 'I', 'N', 'G', 'O'].map((letter, idx) => {
+                                const colors = [
+                                  'bg-red-500',
+                                  'bg-blue-500',
+                                  'bg-yellow-500',
+                                  'bg-green-500',
+                                  'bg-purple-500'
+                                ];
                                 return (
-                                  <div key={letter} className={`${colors[idx]} text-white text-center font-bold p-1`}>
+                                  <div
+                                    key={letter}
+                                    className={`${colors[idx]} text-white text-center font-bold p-1`}
+                                  >
                                     {letter}
                                   </div>
                                 );
@@ -738,7 +907,9 @@ const launchConfetti = useCallback(() => {
                               {card.grid.flat().map((cell, i) => (
                                 <div
                                   key={i}
-                                  className={`border text-center p-2 ${cell === "FREE" ? "bg-yellow-200 font-bold" : ""}`}
+                                  className={`border text-center p-2 ${
+                                    cell === 'FREE' ? 'bg-yellow-200 font-bold' : ''
+                                  }`}
                                 >
                                   {cell}
                                 </div>
@@ -766,7 +937,7 @@ const launchConfetti = useCallback(() => {
                 type="text"
                 value={cardToValidate}
                 onChange={(e) => setCardToValidate(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && validateCard()}
+                onKeyDown={(e) => e.key === 'Enter' && validateCard()}
                 placeholder="Enter Card ID (e.g., A1B2C3D4)"
                 className="flex-1 px-4 py-3 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none text-lg"
               />
@@ -779,9 +950,17 @@ const launchConfetti = useCallback(() => {
             </div>
 
             {validationResult && (
-              <div className={`p-6 rounded-lg ${validationResult.valid ? 'bg-green-50 border-2 border-green-500' : 'bg-red-50 border-2 border-red-500'}`}>
+              <div
+                className={`p-6 rounded-lg ${
+                  validationResult.valid ? 'bg-green-50 border-2 border-green-500' : 'bg-red-50 border-2 border-red-500'
+                }`}
+              >
                 <div className="text-center mb-4">
-                  <div className={`text-4xl font-bold ${validationResult.valid ? 'text-green-600' : 'text-red-600'}`}>
+                  <div
+                    className={`text-4xl font-bold ${
+                      validationResult.valid ? 'text-green-600' : 'text-red-600'
+                    }`}
+                  >
                     {validationResult.valid ? '✓ BINGO!' : '✗ Not Yet'}
                   </div>
                   {validationResult.details && (
@@ -799,8 +978,9 @@ const launchConfetti = useCallback(() => {
                         return (
                           <div
                             key={`${ridx}-${cidx}`}
-                            className={`aspect-square flex items-center justify-center text-lg font-bold rounded ${marked ? 'bg-blue-500 text-white' : 'bg-gray-200'
-                              }`}
+                            className={`aspect-square flex items-center justify-center text-lg font-bold rounded ${
+                              marked ? 'bg-blue-500 text-white' : 'bg-gray-200'
+                            }`}
                           >
                             {cell === 'FREE' ? '★' : cell}
                           </div>
@@ -817,7 +997,7 @@ const launchConfetti = useCallback(() => {
           {gameState && (
             <div className="bg-white rounded-xl shadow-lg p-6 lg:col-span-2">
               <h2 className="text-2xl font-bold mb-4">Current Game Status</h2>
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-4 gap-4 mb-4">
                 <div className="text-center">
                   <div className="text-3xl font-bold text-purple-600">{gameState.drawn.length}</div>
                   <div className="text-sm text-gray-600">Numbers Drawn</div>
@@ -835,6 +1015,28 @@ const launchConfetti = useCallback(() => {
                   <div className="text-sm text-gray-600">Status</div>
                 </div>
               </div>
+
+              <div className="border-t pt-4">
+                <button
+                  onClick={() => setShowAllDrawn(!showAllDrawn)}
+                  className="w-full flex justify-between items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-all"
+                >
+                  <span className="font-semibold">View All Drawn Numbers ({gameState.drawn.length})</span>
+                  <span className="text-xl">{showAllDrawn ? '▲' : '▼'}</span>
+                </button>
+
+                {showAllDrawn && (
+                  <div className="mt-4 max-h-96 overflow-y-auto border rounded-lg p-4 bg-gray-50">
+                    <div className="grid grid-cols-10 gap-2">
+                      {gameState.drawn.map((num, idx) => (
+                        <div key={`${num}-${idx}`} className="flex justify-center">
+                          <BingoBall number={num} size="small" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -843,17 +1045,18 @@ const launchConfetti = useCallback(() => {
       {/* Hidden print area */}
       <div id="print-area" className="hidden print:block">
         <div className="grid grid-cols-2 gap-4">
-          {generatedCards.map(card => (
-            <div
-              key={card.public_id}
-              className="border p-4 shadow break-inside-avoid"
-            >
-              <div className="font-bold text-center mb-2">
-                Card ID: {card.public_id}
-              </div>
+          {generatedCards.map((card) => (
+            <div key={card.public_id} className="border p-4 shadow break-inside-avoid">
+              <div className="font-bold text-center mb-2">Card ID: {card.public_id}</div>
               <div className="grid grid-cols-5 gap-1">
-                {["B", "I", "N", "G", "O"].map((letter, idx) => {
-                  const colors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-purple-500'];
+                {['B', 'I', 'N', 'G', 'O'].map((letter, idx) => {
+                  const colors = [
+                    'bg-red-500',
+                    'bg-blue-500',
+                    'bg-yellow-500',
+                    'bg-green-500',
+                    'bg-purple-500'
+                  ];
                   return (
                     <div key={letter} className={`${colors[idx]} text-white text-center font-bold p-1`}>
                       {letter}
@@ -863,8 +1066,9 @@ const launchConfetti = useCallback(() => {
                 {card.grid.flat().map((cell, i) => (
                   <div
                     key={i}
-                    className={`border text-center p-2 aspect-square flex items-center justify-center ${cell === "FREE" ? "bg-yellow-200 font-bold" : ""
-                      }`}
+                    className={`border text-center p-2 aspect-square flex items-center justify-center ${
+                      cell === 'FREE' ? 'bg-yellow-200 font-bold' : ''
+                    }`}
                   >
                     {cell}
                   </div>
@@ -878,4 +1082,4 @@ const launchConfetti = useCallback(() => {
   );
 };
 
-export default BingoApp;
+export default BingoApp;

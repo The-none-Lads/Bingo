@@ -163,7 +163,7 @@ jobs:
       - name: Lint styles with Stylelint (warnings only)
         run: |
           cd frontend
-          npx stylelint "**/*.{css,scss}"
+          npx stylelint "src/**/*.css"
         continue-on-error: true
 
       - name: Lint YAML with yamllint (warnings only)
