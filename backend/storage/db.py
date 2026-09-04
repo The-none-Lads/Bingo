@@ -75,7 +75,10 @@ class CardRepository:
                 public_id TEXT PRIMARY KEY,
                 serial TEXT NOT NULL,
                 game_id TEXT,
-                grid TEXT NOT NULL
+                grid TEXT NOT NULL,
+                owner_id TEXT,
+                is_persistent BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """)
         conn.commit()

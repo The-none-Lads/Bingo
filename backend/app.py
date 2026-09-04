@@ -1,8 +1,12 @@
+from contextlib import asynccontextmanager
 import os
 import re
 import secrets
 from typing import List, Optional
 
+from auth.dependencies import verify_admin_flexible
+from auth.headers import SecurityHeadersMiddleware
+from database import close_db, init_db
 from dotenv import load_dotenv
 from fastapi import (
     Depends,
@@ -25,6 +29,7 @@ from models import (
     ValidateRequest,
     ValidateResponse,
 )
+from routes.auth import router as auth_router
 from storage.db import PersistentStorageFullError, PersistentStorageUnavailableError, db
 
 load_dotenv()
@@ -43,11 +48,20 @@ def is_docs_enabled() -> bool:
     return get_bool_env("ENABLE_DOCS", True)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan managing database initialization and cleanup."""
+    await init_db()
+    yield
+    await close_db()
+
+
 app = FastAPI(
     title="Bingo Game API",
     docs_url="/docs" if is_docs_enabled() else None,
     redoc_url="/redoc" if is_docs_enabled() else None,
     openapi_url="/openapi.json" if is_docs_enabled() else None,
+    lifespan=lifespan,
 )
 
 
@@ -79,7 +93,8 @@ allow_credentials = get_bool_env("CORS_ALLOW_CREDENTIALS", True)
 if "*" in cors_origins:
     allow_credentials = False
 
-# CORS Configuration
+# Security & CORS Middleware
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -88,6 +103,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount Authentication Router
+app.include_router(auth_router)
+
 
 # -------------------------
 # Authentication / Authorization
@@ -95,31 +113,13 @@ app.add_middleware(
 
 
 async def verify_admin(
-    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
-    authorization: Optional[str] = Header(None),
+    is_admin: bool = Depends(verify_admin_flexible),
 ) -> bool:
     """
-    Lightweight admin authorization verification.
-    If ADMIN_API_KEY or ADMIN_SECRET is configured, validates credentials.
-    If neither is configured, allows open access for development/private instances.
+    Admin verification dependency: accepts ADMIN_API_KEY/ADMIN_SECRET or session ADMIN role.
     """
-    admin_key = os.getenv("ADMIN_API_KEY") or os.getenv("ADMIN_SECRET")
-    if not admin_key:
-        return True
+    return is_admin
 
-    if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
-        return True
-
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            if secrets.compare_digest(parts[1], admin_key):
-                return True
-
-    raise HTTPException(
-        status_code=401,
-        detail="Unauthorized: Admin authentication required",
-    )
 
 
 # -------------------------
