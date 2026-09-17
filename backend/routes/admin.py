@@ -22,10 +22,13 @@ router = APIRouter(prefix="/admin", tags=["Administration"])
 def format_user_admin_response(user: User) -> UserAdminResponse:
     """Format a User for admin response."""
     now = datetime.now(timezone.utc)
-    active_sessions = [
-        s for s in user.sessions
-        if s.expires_at > now
-    ]
+    active_sessions = []
+    for s in user.sessions:
+        expires = s.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires > now:
+            active_sessions.append(s)
     return UserAdminResponse(
         id=user.id,
         username=user.username,

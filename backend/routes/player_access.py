@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from auth.dependencies import get_client_ip
+from auth.proxy import get_client_ip
 from auth.player_access import (
     create_access_link,
     create_player_session,

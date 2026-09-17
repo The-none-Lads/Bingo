@@ -93,11 +93,13 @@ class TestAdminAuthorizationHardening:
         monkeypatch.setenv("ADMIN_API_KEY", secret)
         test_client = TestClient(app)
 
-        # 1. Unauthenticated request to privileged endpoint is rejected (401)
+        # With ADMIN_API_KEY set, bootstrap mode is disabled
+        # Unauthenticated request should be rejected (401)
         res_start = test_client.post(
             "/games/secure_game/start",
             json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
         )
+        # When ADMIN_API_KEY is set, verify_admin_flexible rejects with 401
         assert res_start.status_code == 401
 
         res_draw = test_client.post("/games/secure_game/draw")

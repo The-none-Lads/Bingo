@@ -13,11 +13,13 @@ Resource ownership:
 - Legacy resources with owner_id = NULL are treated as system-owned (ADMIN only).
 """
 
+import os
+import secrets
 from typing import Optional
 
 from auth.dependencies import get_current_user, require_authenticated_user
 from db_models import User
-from fastapi import Depends, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 # Role hierarchy: higher number = more privileges
 ROLE_HIERARCHY = {
@@ -51,10 +53,15 @@ class RBACError(HTTPException):
 
 async def require_operator_with_bootstrap(
     user: Optional[User] = Depends(get_current_user),
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None),
 ) -> Optional[User]:
     """
     Require OPERATOR or ADMIN role, but allow open access when no users exist
-    (bootstrap mode for initial setup).
+    (bootstrap mode for initial setup) AND no ADMIN_API_KEY is configured.
+    
+    Also accepts ADMIN_API_KEY/ADMIN_SECRET via X-Admin-Key or Authorization header
+    for legacy/admin access.
     """
     from database import get_db_session
     from sqlalchemy import func, select
@@ -64,7 +71,21 @@ async def require_operator_with_bootstrap(
     result = await db_session.execute(select(func.count(User.id)))
     total_users = result.scalar_one()
 
-    if total_users == 0:
+    # Check if ADMIN_API_KEY is configured
+    admin_key = os.getenv("ADMIN_API_KEY") or os.getenv("ADMIN_SECRET")
+
+    # If admin key is provided and valid, allow access
+    if admin_key:
+        if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
+            return None  # Admin key access - no user object needed
+        if authorization:
+            parts = authorization.split()
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                if secrets.compare_digest(parts[1], admin_key):
+                    return None  # Admin key access
+
+    if total_users == 0 and not admin_key:
+        # Bootstrap mode: no users and no admin key
         return None
 
     if not user:
@@ -83,7 +104,7 @@ async def require_admin(
     user: User = Depends(require_authenticated_user),
 ) -> User:
     """Require ADMIN role."""
-    if not has_role(user, "ADMIN"):
+    if user.role != "ADMIN":
         raise RBACError("Forbidden: Administrator privileges required")
     return user
 

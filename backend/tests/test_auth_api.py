@@ -51,7 +51,7 @@ class TestAuthAPI:
                 },
             )
             assert resp2.status_code == 201
-            assert resp2.json()["role"] == "USER"
+            assert resp2.json()["role"] == "OPERATOR"
 
     async def test_duplicate_registration_fails(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

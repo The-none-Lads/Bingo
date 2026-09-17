@@ -40,8 +40,8 @@ class TestDatabaseMigration:
             conn.close()
 
             # 2. Configure Alembic to point to this temp DB
-            alembic_cfg = Config(os.path.abspath("backend/alembic.ini"))
-            alembic_cfg.set_main_option("script_location", os.path.abspath("backend/alembic"))
+            alembic_cfg = Config("alembic.ini")
+            alembic_cfg.set_main_option("script_location", "alembic")
             # For migration execution, use sqlite:/// URI
             normalized_path = tmp_db_path.replace("\\", "/")
             alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{normalized_path}")

@@ -1,12 +1,8 @@
 # backend/tests/conftest.py
 import os
 
-
-def pytest_configure():
-    # Set default env vars for tests
-    os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
-    os.environ.setdefault("CORS_ALLOW_CREDENTIALS", "true")
-    # ":memory:" keeps the card store fully in-process and per-instance,
-    # so tests never touch disk or pollute/read a real deployment's
-    # persisted card file (backend/data/cards.db by default).
-    os.environ.setdefault("CARD_DB_PATH", ":memory:")
+# Set env vars BEFORE any other imports that may use the database
+os.environ["CORS_ORIGINS"] = "http://localhost:3000"
+os.environ["CORS_ALLOW_CREDENTIALS"] = "true"
+os.environ["CARD_DB_PATH"] = ":memory:"
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"

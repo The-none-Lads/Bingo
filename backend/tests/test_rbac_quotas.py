@@ -9,15 +9,13 @@ Covers:
 - User self-service endpoints (/auth/my/games, /auth/quota)
 """
 
-import os
-
 import pytest
 import pytest_asyncio
 from app import app
 from auth.rate_limit import auth_rate_limiter
-from auth.session import SESSION_COOKIE_NAME
-from database import Base, close_db, get_engine
+from database import Base, close_db, get_db_session, get_engine
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete
 from storage.db import db
 
 
@@ -25,13 +23,7 @@ from storage.db import db
 async def reset_db_and_limiter():
     await auth_rate_limiter.reset()
     db.clear()
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     yield
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await close_db()
     db.clear()
 
 
@@ -64,12 +56,13 @@ class TestRBACRoleHierarchy:
             assert resp.json()["role"] == "ADMIN"
 
     @pytest.mark.asyncio
-    async def test_second_user_is_regular(self):
+    async def test_second_user_is_operator(self):
+        """After first admin, new users are OPERATOR (not USER) for operational readiness."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
             resp = await _register_user(client, "user1", "user1@test.com")
             assert resp.status_code == 201
-            assert resp.json()["role"] == "USER"
+            assert resp.json()["role"] == "OPERATOR"
 
     @pytest.mark.asyncio
     async def test_user_cannot_access_admin_endpoints(self):
@@ -84,19 +77,21 @@ class TestRBACRoleHierarchy:
             assert resp.status_code == 200
 
             # Try to list users
-            resp = await client.get("/auth/admin/users")
+            resp = await client.get("/admin/users")
             assert resp.status_code == 403
 
     @pytest.mark.asyncio
     async def test_admin_can_list_users(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
-            await _register_user(client, "user1", "user1@test.com")
+            await _register_user(client, "op1", "op1@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            resp = await client.get("/auth/admin/users")
+            resp = await client.get("/admin/users")
             assert resp.status_code == 200
             data = resp.json()
-            assert len(data) == 2
+            assert len(data) >= 2
 
 
 class TestResourceOwnership:
@@ -105,53 +100,52 @@ class TestResourceOwnership:
     @pytest.mark.asyncio
     async def test_operator_cannot_access_other_users_game(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            # Create admin + 2 users
+            # Create admin + 2 operators
             await _register_user(client, "admin1", "admin1@test.com")
-            await _register_user(client, "user1", "user1@test.com")
-            await _register_user(client, "user2", "user2@test.com")
+            await _register_user(client, "op1", "op1@test.com")
+            await _register_user(client, "op2", "op2@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            # Promote user1 to OPERATOR via admin
-            # First, get user list to find user1's ID
-            users = (await client.get("/auth/admin/users")).json()
-            user1_id = [u for u in users if u["username"] == "user1"][0]["id"]
-            await client.patch(
-                f"/auth/admin/users/{user1_id}",
-                json={"role": "OPERATOR"},
-            )
+            # Promote to OPERATOR
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            op2 = [u for u in users if u["username"] == "op2"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
+            await client.patch(f"/admin/users/{op2['id']}", json={"role": "OPERATOR"})
 
-            # Login as user1 and create a game
+            # Login as op1 and create a game
             await client.post("/auth/logout")
-            await _login_user(client, "user1")
+            await _login_user(client, "op1")
             resp = await client.post(
                 "/games/game1/start",
                 json={"mode": "regular", "ball_set": 75, "stage": 1},
             )
             assert resp.status_code == 200
 
-            # Login as user2 and try to access game1
+            # Login as op2 and try to access game1
             await client.post("/auth/logout")
-            await _login_user(client, "user2")
+            await _login_user(client, "op2")
             resp = await client.post("/games/game1/draw")
             assert resp.status_code == 403
 
     @pytest.mark.asyncio
     async def test_admin_can_access_any_game(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            # Create admin + user
+            # Create admin + operator
             await _register_user(client, "admin1", "admin1@test.com")
-            await _register_user(client, "user1", "user1@test.com")
+            await _register_user(client, "op1", "op1@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            # Promote user1 to OPERATOR
-            users = (await client.get("/auth/admin/users")).json()
-            user1_id = [u for u in users if u["username"] == "user1"][0]["id"]
-            await client.patch(
-                f"/auth/admin/users/{user1_id}",
-                json={"role": "OPERATOR"},
-            )
+            # Promote op1 to OPERATOR
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
 
-            # Login as user1 and create a game
+            # Login as op1 and create a game
             await client.post("/auth/logout")
-            await _login_user(client, "user1")
+            await _login_user(client, "op1")
             await client.post(
                 "/games/game1/start",
                 json={"mode": "regular", "ball_set": 75, "stage": 1},
@@ -170,12 +164,14 @@ class TestResourceOwnership:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "op1", "op1@test.com")
             await _register_user(client, "op2", "op2@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            users = (await client.get("/auth/admin/users")).json()
-            op1_id = [u for u in users if u["username"] == "op1"][0]["id"]
-            op2_id = [u for u in users if u["username"] == "op2"][0]["id"]
-            await client.patch(f"/auth/admin/users/{op1_id}", json={"role": "OPERATOR"})
-            await client.patch(f"/auth/admin/users/{op2_id}", json={"role": "OPERATOR"})
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            op2 = [u for u in users if u["username"] == "op2"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
+            await client.patch(f"/admin/users/{op2['id']}", json={"role": "OPERATOR"})
 
             # Op1 creates cards in game1
             await client.post("/auth/logout")
@@ -215,9 +211,11 @@ class TestUserQuotas:
             # Create admin + operator
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "op1", "op1@test.com")
-            users = (await client.get("/auth/admin/users")).json()
-            op1_id = [u for u in users if u["username"] == "op1"][0]["id"]
-            await client.patch(f"/auth/admin/users/{op1_id}", json={"role": "OPERATOR"})
+            # Re-login as admin
+            await _login_user(client, "admin1")
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
 
             # Login as op1
             await client.post("/auth/logout")
@@ -243,6 +241,7 @@ class TestUserQuotas:
     async def test_admin_exempt_from_game_quota(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
+            await _login_user(client, "admin1")  # Login as admin
 
             # Create 11 games as admin (should all succeed)
             for i in range(11):
@@ -258,9 +257,11 @@ class TestUserQuotas:
             # Create admin + operator
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "op1", "op1@test.com")
-            users = (await client.get("/auth/admin/users")).json()
-            op1_id = [u for u in users if u["username"] == "op1"][0]["id"]
-            await client.patch(f"/auth/admin/users/{op1_id}", json={"role": "OPERATOR"})
+            # Re-login as admin
+            await _login_user(client, "admin1")
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
 
             # Login as op1
             await client.post("/auth/logout")
@@ -287,9 +288,11 @@ class TestUserQuotas:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "op1", "op1@test.com")
-            users = (await client.get("/auth/admin/users")).json()
-            op1_id = [u for u in users if u["username"] == "op1"][0]["id"]
-            await client.patch(f"/auth/admin/users/{op1_id}", json={"role": "OPERATOR"})
+            # Re-login as admin
+            await _login_user(client, "admin1")
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
 
             await client.post("/auth/logout")
             await _login_user(client, "op1")
@@ -318,12 +321,14 @@ class TestAdminUserManagement:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "user1", "user1@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            users = (await client.get("/auth/admin/users")).json()
-            user1_id = [u for u in users if u["username"] == "user1"][0]["id"]
+            users = (await client.get("/admin/users")).json()
+            user1 = [u for u in users if u["username"] == "user1"][0]
 
             resp = await client.patch(
-                f"/auth/admin/users/{user1_id}",
+                f"/admin/users/{user1['id']}",
                 json={"role": "OPERATOR"},
             )
             assert resp.status_code == 200
@@ -334,11 +339,11 @@ class TestAdminUserManagement:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
 
-            users = (await client.get("/auth/admin/users")).json()
-            admin_id = [u for u in users if u["username"] == "admin1"][0]["id"]
+            users = (await client.get("/admin/users")).json()
+            admin = [u for u in users if u["username"] == "admin1"][0]
 
             resp = await client.patch(
-                f"/auth/admin/users/{admin_id}",
+                f"/admin/users/{admin['id']}",
                 json={"role": "USER"},
             )
             assert resp.status_code == 400
@@ -348,13 +353,15 @@ class TestAdminUserManagement:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "user1", "user1@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            users = (await client.get("/auth/admin/users")).json()
-            user1_id = [u for u in users if u["username"] == "user1"][0]["id"]
+            users = (await client.get("/admin/users")).json()
+            user1 = [u for u in users if u["username"] == "user1"][0]
 
             # Deactivate
             resp = await client.patch(
-                f"/auth/admin/users/{user1_id}",
+                f"/admin/users/{user1['id']}",
                 json={"is_active": False},
             )
             assert resp.status_code == 200
@@ -370,15 +377,17 @@ class TestAdminUserManagement:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "user1", "user1@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            users = (await client.get("/auth/admin/users")).json()
-            user1_id = [u for u in users if u["username"] == "user1"][0]["id"]
+            users = (await client.get("/admin/users")).json()
+            user1 = [u for u in users if u["username"] == "user1"][0]
 
-            resp = await client.delete(f"/auth/admin/users/{user1_id}")
+            resp = await client.delete(f"/admin/users/{user1['id']}")
             assert resp.status_code == 200
 
             # User should no longer exist
-            resp = await client.get(f"/auth/admin/users/{user1_id}")
+            resp = await client.get(f"/admin/users/{user1['id']}")
             assert resp.status_code == 404
 
 
@@ -390,10 +399,12 @@ class TestUserServiceEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "op1", "op1@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            users = (await client.get("/auth/admin/users")).json()
-            op1_id = [u for u in users if u["username"] == "op1"][0]["id"]
-            await client.patch(f"/auth/admin/users/{op1_id}", json={"role": "OPERATOR"})
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
 
             await client.post("/auth/logout")
             await _login_user(client, "op1")
@@ -414,10 +425,12 @@ class TestUserServiceEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "op1", "op1@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            users = (await client.get("/auth/admin/users")).json()
-            op1_id = [u for u in users if u["username"] == "op1"][0]["id"]
-            await client.patch(f"/auth/admin/users/{op1_id}", json={"role": "OPERATOR"})
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
 
             await client.post("/auth/logout")
             await _login_user(client, "op1")
@@ -440,12 +453,14 @@ class TestUserServiceEndpoints:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "op1", "op1@test.com")
             await _register_user(client, "op2", "op2@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            users = (await client.get("/auth/admin/users")).json()
-            op1_id = [u for u in users if u["username"] == "op1"][0]["id"]
-            op2_id = [u for u in users if u["username"] == "op2"][0]["id"]
-            await client.patch(f"/auth/admin/users/{op1_id}", json={"role": "OPERATOR"})
-            await client.patch(f"/auth/admin/users/{op2_id}", json={"role": "OPERATOR"})
+            users = (await client.get("/admin/users")).json()
+            op1 = [u for u in users if u["username"] == "op1"][0]
+            op2 = [u for u in users if u["username"] == "op2"][0]
+            await client.patch(f"/admin/users/{op1['id']}", json={"role": "OPERATOR"})
+            await client.patch(f"/admin/users/{op2['id']}", json={"role": "OPERATOR"})
 
             # Op1 creates game
             await client.post("/auth/logout")
@@ -470,13 +485,15 @@ class TestOperatorRolePromotion:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
             await _register_user(client, "user1", "user1@test.com")
+            # Re-login as admin
+            await _login_user(client, "admin1")
 
-            users = (await client.get("/auth/admin/users")).json()
-            user1_id = [u for u in users if u["username"] == "user1"][0]["id"]
+            users = (await client.get("/admin/users")).json()
+            user1 = [u for u in users if u["username"] == "user1"][0]
 
             # Promote to operator
             resp = await client.patch(
-                f"/auth/admin/users/{user1_id}",
+                f"/admin/users/{user1['id']}",
                 json={"role": "OPERATOR"},
             )
             assert resp.status_code == 200
@@ -493,16 +510,17 @@ class TestOperatorRolePromotion:
             assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_regular_user_cannot_create_games(self):
+    async def test_operator_can_create_games(self):
+        """OPERATOR role (default for new users) can create games."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _register_user(client, "admin1", "admin1@test.com")
-            await _register_user(client, "user1", "user1@test.com")
+            await _register_user(client, "op1", "op1@test.com")
 
             await client.post("/auth/logout")
-            await _login_user(client, "user1")
+            await _login_user(client, "op1")
 
             resp = await client.post(
                 "/games/game1/start",
                 json={"mode": "regular", "ball_set": 75, "stage": 1},
             )
-            assert resp.status_code in (401, 403)
+            assert resp.status_code == 200

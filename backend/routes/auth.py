@@ -389,7 +389,7 @@ async def update_user(
 )
 async def delete_user(
     user_id: str,
-    user: User = Depends(require_admin),
+    current_admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Delete a user account. ADMIN only."""
@@ -398,7 +398,7 @@ async def delete_user(
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if target_user.id == user.id:
+    if target_user.id == current_admin.id:
         raise HTTPException(
             status_code=400,
             detail="Cannot delete your own account.",

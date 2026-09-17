@@ -53,7 +53,15 @@ def is_docs_enabled() -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan managing database initialization and cleanup."""
-    await init_db()
+    # Initialize database tables
+    try:
+        await init_db()
+    except Exception:
+        # If async init fails (e.g., in tests with TestClient), try sync
+        from sqlalchemy import create_engine
+        engine = create_engine(get_database_url().replace("sqlite+aiosqlite", "sqlite"))
+        Base.metadata.create_all(engine)
+        engine.dispose()
     yield
     await close_db()
 
