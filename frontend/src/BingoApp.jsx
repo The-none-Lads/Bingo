@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, CheckCircle2, Settings, Printer, Crown, User } from 'lucide-react';
+import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield } from 'lucide-react';
 import { AuthModal } from './AuthModal';
+import { AdminDashboard } from './AdminDashboard';
 import { config } from './config';
 import { getBallTransition } from './ballHistory';
 
@@ -725,6 +726,17 @@ const BingoApp = () => {
   }
 
   // Admin View
+  // If user is ADMIN, show the full system dashboard
+  if (view === 'admin' && currentUser?.role === 'ADMIN') {
+    return (
+      <AdminDashboard
+        currentUser={currentUser}
+        onClose={() => setView('display')}
+      />
+    );
+  }
+
+  // Otherwise show the operator game management view
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
@@ -760,7 +772,19 @@ const BingoApp = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Admin System Dashboard Button (ADMIN only) */}
+          {currentUser?.role === 'ADMIN' && (
+            <div className="mb-6">
+              <button
+                onClick={() => setView('admin')}
+                className="px-4 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg hover:bg-red-100 transition-all text-sm font-medium flex items-center gap-2"
+              >
+                <Shield className="w-4 h-4" />
+                System Administration
+              </button>
+            </div>
+          )}
+
           {/* Game Controls */}
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
@@ -781,19 +805,19 @@ const BingoApp = () => {
 
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Admin Key
+                  Signed in as
                   <span className="ml-2 text-xs font-normal text-gray-500">
-                    (only needed if the backend has ADMIN_API_KEY configured)
+                    ({currentUser?.role || 'Guest'})
                   </span>
                 </label>
-                <input
-                  type="password"
-                  value={adminKey}
-                  onChange={(e) => setAdminKey(e.target.value)}
-                  placeholder="Leave blank for open/dev deployments"
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                  autoComplete="off"
-                />
+                <div className="flex items-center gap-2">
+                  <div className="px-4 py-2 bg-purple-50 border border-purple-200 rounded-lg text-purple-700 font-medium">
+                    {currentUser?.username || 'Anonymous'}
+                  </div>
+                  {currentUser?.role === 'ADMIN' && (
+                    <Shield className="w-5 h-5 text-red-500" />
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
