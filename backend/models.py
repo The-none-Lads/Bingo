@@ -91,3 +91,95 @@ class ValidateResponse(BaseModel):
     grid: List[List[Union[str, int]]]
     public_id: str
     type: Optional[str] = None  # optional, so REST still works
+
+
+# --- Auth-related schemas ---
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(
+        ...,
+        min_length=3,
+        max_length=32,
+        pattern=r"^[a-zA-Z0-9_\-]+$",
+        description="Username (3-32 alphanumeric characters, underscores, hyphens)",
+    )
+    email: str = Field(
+        ...,
+        min_length=5,
+        max_length=255,
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+        description="Valid email address",
+    )
+    password: str = Field(
+        ...,
+        min_length=8,
+        max_length=128,
+        description="Password (8-128 characters)",
+    )
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Username or email address",
+    )
+    password: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        description="Password",
+    )
+
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    role: str
+    is_active: bool
+    created_at: Optional[str] = None
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class AuthStatusResponse(BaseModel):
+    authenticated: bool
+    user: Optional[UserResponse] = None
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+# --- Admin schemas ---
+
+
+class UserAdminResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    role: str
+    is_active: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    auth_providers: List[str] = []
+    session_count: int = 0
+
+
+class UserUpdateRequest(BaseModel):
+    role: Optional[str] = Field(None, pattern=r"^(USER|OPERATOR|ADMIN)$")
+    is_active: Optional[bool] = None
+
+
+class UserQuotaInfo(BaseModel):
+    active_games: int
+    max_games: int
+    persistent_cards: int
+    max_persistent_cards: int
+

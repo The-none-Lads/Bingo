@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
+import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield } from 'lucide-react';
+import { AuthModal } from './AuthModal';
+import { AdminDashboard } from './AdminDashboard';
 import { config } from './config';
 import { getBallTransition } from './ballHistory';
 
@@ -68,14 +70,15 @@ const BingoApp = () => {
   const [wsConnected, setWsConnected] = useState(false);
   const [showAllDrawn, setShowAllDrawn] = useState(false);
 
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
   // Admin credential (never sent by the public display view; only used for
   // the privileged start/draw/stage/cards-batch/cards-list requests). This
   // is stored client-side only and is opt-in: if the backend has no
   // ADMIN_API_KEY configured, an empty value here is simply ignored.
-  // Using sessionStorage instead of localStorage: the key is scoped to the
-  // tab session and cleared on close, reducing exposure to XSS and browser
-  // extensions that can read persistent storage.
-  const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem('bingo_admin_key') || '');
+  const [adminKey, setAdminKey] = useState(() => localStorage.getItem('bingo_admin_key') || '');
 
   // Authoritative Ball History State
   const [currentBall, setCurrentBall] = useState(null);
@@ -100,9 +103,48 @@ const BingoApp = () => {
   const POLL_INTERVAL = config.pollInterval;
   const CARD_FETCH_INTERVAL = config.cardFetchInterval;
 
-  // Persist the admin key in sessionStorage, mirroring the existing gameId pattern.
+  // Fetch current authenticated user on load
+  const fetchCurrentUser = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentUser(data);
+      } else {
+        setCurrentUser(null);
+      }
+    } catch (err) {
+      setCurrentUser(null);
+    }
+  }, [API_BASE]);
+
   useEffect(() => {
-    sessionStorage.setItem('bingo_admin_key', adminKey);
+    fetchCurrentUser();
+  }, [fetchCurrentUser]);
+
+  const handleLogout = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        credentials: 'include'
+      });
+      if (res.ok) {
+        setCurrentUser(null);
+        setIsAuthModalOpen(false);
+      }
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
+  // Persist the admin key locally, mirroring the existing gameId pattern.
+  useEffect(() => {
+    localStorage.setItem('bingo_admin_key', adminKey);
   }, [adminKey]);
 
   // Header(s) to attach to requests that may require admin authorization.
@@ -128,7 +170,8 @@ const BingoApp = () => {
   const fetchCardsForGame = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/games/${gameId}/cards`, {
-        headers: adminHeaders()
+        headers: adminHeaders(),
+        credentials: 'include'
       });
       if (response.ok) {
         const data = await response.json();
@@ -197,7 +240,9 @@ const BingoApp = () => {
   // Function to fetch game state
   const fetchGameState = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/games/${gameId}/state`);
+      const response = await fetch(`${API_BASE}/games/${gameId}/state`, {
+        credentials: 'include'
+      });
       if (response.ok) {
         const data = await response.json();
         const now = Date.now();
@@ -385,6 +430,7 @@ const BingoApp = () => {
       await fetch(`${API_BASE}/games/${gameId}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        credentials: 'include',
         body: JSON.stringify({ mode, ball_set: 75, stage })
       });
       if (!wsConnected) {
@@ -399,7 +445,8 @@ const BingoApp = () => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/draw`, {
         method: 'POST',
-        headers: adminHeaders()
+        headers: adminHeaders(),
+        credentials: 'include'
       });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
@@ -413,7 +460,8 @@ const BingoApp = () => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, {
         method: 'POST',
-        headers: adminHeaders()
+        headers: adminHeaders(),
+        credentials: 'include'
       });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
@@ -428,6 +476,7 @@ const BingoApp = () => {
       const res = await fetch(`${API_BASE}/cards/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        credentials: 'include',
         body: JSON.stringify({ count, game_id: gameId, persistent: storePermanently })
       });
       const data = await res.json();
@@ -450,6 +499,7 @@ const BingoApp = () => {
       const res = await fetch(`${API_BASE}/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ game_id: gameId, serial: cardToValidate.trim() })
       });
       const data = await res.json();
@@ -520,6 +570,14 @@ const BingoApp = () => {
                 className="px-3 py-2 rounded bg-black/50 border border-yellow-500 text-yellow-300 focus:outline-none focus:ring-2 focus:ring-yellow-400"
                 placeholder="Game ID"
               />
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className="px-4 py-2.5 bg-black/50 border border-yellow-500 text-yellow-300 font-bold rounded-lg hover:bg-yellow-500/20 transition-all flex items-center gap-2"
+                title={currentUser ? `Signed in as ${currentUser.username}` : 'Sign In'}
+              >
+                <User className="w-5 h-5" />
+                <span className="hidden md:inline">{currentUser ? currentUser.username : 'Sign In'}</span>
+              </button>
               <button
                 onClick={() => setView('admin')}
                 className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg"
@@ -652,12 +710,33 @@ const BingoApp = () => {
               </div>
             </div>
           )}
+
+          {/* Auth Modal */}
+          <AuthModal
+            isOpen={isAuthModalOpen}
+            onClose={() => setIsAuthModalOpen(false)}
+            currentUser={currentUser}
+            onAuthSuccess={(user) => setCurrentUser(user)}
+            onLogout={handleLogout}
+            apiBaseUrl={API_BASE}
+          />
         </div>
       </div>
     );
   }
 
   // Admin View
+  // If user is ADMIN, show the full system dashboard
+  if (view === 'admin' && currentUser?.role === 'ADMIN') {
+    return (
+      <AdminDashboard
+        currentUser={currentUser}
+        onClose={() => setView('display')}
+      />
+    );
+  }
+
+  // Otherwise show the operator game management view
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
@@ -675,15 +754,37 @@ const BingoApp = () => {
               {wsConnected ? 'Connected' : 'Polling Mode'}
             </div>
           </div>
-          <button
-            onClick={() => setView('display')}
-            className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all"
-          >
-            Switch to Display View
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsAuthModalOpen(true)}
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-gray-700 text-sm font-medium"
+              title={currentUser ? `Signed in as ${currentUser.username}` : 'Sign In'}
+            >
+              <User className="w-4 h-4" />
+              <span>{currentUser ? currentUser.username : 'Sign In'}</span>
+            </button>
+            <button
+              onClick={() => setView('display')}
+              className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all"
+            >
+              Switch to Display View
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Admin System Dashboard Button (ADMIN only) */}
+          {currentUser?.role === 'ADMIN' && (
+            <div className="mb-6">
+              <button
+                onClick={() => setView('admin')}
+                className="px-4 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg hover:bg-red-100 transition-all text-sm font-medium flex items-center gap-2"
+              >
+                <Shield className="w-4 h-4" />
+                System Administration
+              </button>
+            </div>
+          )}
+
           {/* Game Controls */}
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
@@ -704,19 +805,19 @@ const BingoApp = () => {
 
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Admin Key
+                  Signed in as
                   <span className="ml-2 text-xs font-normal text-gray-500">
-                    (only needed if the backend has ADMIN_API_KEY configured)
+                    ({currentUser?.role || 'Guest'})
                   </span>
                 </label>
-                <input
-                  type="password"
-                  value={adminKey}
-                  onChange={(e) => setAdminKey(e.target.value)}
-                  placeholder="Leave blank for open/dev deployments"
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                  autoComplete="off"
-                />
+                <div className="flex items-center gap-2">
+                  <div className="px-4 py-2 bg-purple-50 border border-purple-200 rounded-lg text-purple-700 font-medium">
+                    {currentUser?.username || 'Anonymous'}
+                  </div>
+                  {currentUser?.role === 'ADMIN' && (
+                    <Shield className="w-5 h-5 text-red-500" />
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1081,6 +1182,16 @@ const BingoApp = () => {
           ))}
         </div>
       </div>
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onAuthSuccess={(user) => setCurrentUser(user)}
+        onLogout={handleLogout}
+        apiBaseUrl={API_BASE}
+      />
     </div>
   );
 };

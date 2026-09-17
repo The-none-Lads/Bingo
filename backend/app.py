@@ -1,9 +1,15 @@
+from contextlib import asynccontextmanager
 import os
 import re
 import secrets
 from typing import List, Optional
 
+from auth.dependencies import verify_admin_flexible
+from auth.headers import SecurityHeadersMiddleware
+from auth.rbac import assert_resource_access, has_role, require_admin, require_operator_with_bootstrap
+from database import close_db, init_db
 from dotenv import load_dotenv
+from db_models import User
 from fastapi import (
     Depends,
     FastAPI,
@@ -25,6 +31,7 @@ from models import (
     ValidateRequest,
     ValidateResponse,
 )
+from routes.auth import router as auth_router
 from storage.db import PersistentStorageFullError, PersistentStorageUnavailableError, db
 
 load_dotenv()
@@ -43,11 +50,20 @@ def is_docs_enabled() -> bool:
     return get_bool_env("ENABLE_DOCS", True)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan managing database initialization and cleanup."""
+    await init_db()
+    yield
+    await close_db()
+
+
 app = FastAPI(
     title="Bingo Game API",
     docs_url="/docs" if is_docs_enabled() else None,
     redoc_url="/redoc" if is_docs_enabled() else None,
     openapi_url="/openapi.json" if is_docs_enabled() else None,
+    lifespan=lifespan,
 )
 
 
@@ -79,7 +95,8 @@ allow_credentials = get_bool_env("CORS_ALLOW_CREDENTIALS", True)
 if "*" in cors_origins:
     allow_credentials = False
 
-# CORS Configuration
+# Security & CORS Middleware
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -88,6 +105,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount routers
+app.include_router(auth_router)
+from routes.admin import router as admin_router
+app.include_router(admin_router)
+
 
 # -------------------------
 # Authentication / Authorization
@@ -95,31 +117,13 @@ app.add_middleware(
 
 
 async def verify_admin(
-    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
-    authorization: Optional[str] = Header(None),
+    is_admin: bool = Depends(verify_admin_flexible),
 ) -> bool:
     """
-    Lightweight admin authorization verification.
-    If ADMIN_API_KEY or ADMIN_SECRET is configured, validates credentials.
-    If neither is configured, allows open access for development/private instances.
+    Admin verification dependency: accepts ADMIN_API_KEY/ADMIN_SECRET or session ADMIN role.
     """
-    admin_key = os.getenv("ADMIN_API_KEY") or os.getenv("ADMIN_SECRET")
-    if not admin_key:
-        return True
+    return is_admin
 
-    if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
-        return True
-
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            if secrets.compare_digest(parts[1], admin_key):
-                return True
-
-    raise HTTPException(
-        status_code=401,
-        detail="Unauthorized: Admin authentication required",
-    )
 
 
 # -------------------------
@@ -220,36 +224,42 @@ async def broadcast_game_state(game_id: str):
 @app.post("/games/{game_id}/start")
 async def start_game(
     req: CreateGameRequest,
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
-    _admin: bool = Depends(verify_admin),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\\-]+$"),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
+    # Enforce per-user active games quota
+    if current_user:
+        from auth.quotas import check_active_games_quota
+        await check_active_games_quota(current_user, exclude_game_id=game_id)
+
     async with db.get_lock(game_id):
         engine = DrawEngine(max_number=req.ball_set)
-        db.set_game(
-            game_id,
-            {
-                "engine": engine,
-                "drawn": engine.drawn,
-                "mode": req.mode,
-                "stage": req.stage,
-                "ball_set": req.ball_set,
-                "status": "active",
-            },
-        )
+        game_data = {
+            "engine": engine,
+            "drawn": engine.drawn,
+            "mode": req.mode,
+            "stage": req.stage,
+            "ball_set": req.ball_set,
+            "status": "active",
+            "owner_id": current_user.id if current_user else None,
+        }
+        db.set_game(game_id, game_data)
         await broadcast_game_state(game_id)
         return {"message": f"Game {game_id} started", "config": req.model_dump()}
 
 
 @app.post("/games/{game_id}/stage/{required_rows}")
 async def set_stage(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\-]+$"),
     required_rows: int = Path(..., ge=1, le=5),
-    _admin: bool = Depends(verify_admin),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
     async with db.get_lock(game_id):
         game = db.games.get(game_id)
         if not game:
             raise HTTPException(status_code=404, detail="Game not found")
+        if current_user:
+            assert_resource_access(current_user, game.get("owner_id"))
         game["stage"] = required_rows
         await broadcast_game_state(game_id)
         return {"game_id": game_id, "stage": required_rows}
@@ -257,13 +267,15 @@ async def set_stage(
 
 @app.post("/games/{game_id}/draw")
 async def draw_number(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
-    _admin: bool = Depends(verify_admin),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\-]+$"),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
     async with db.get_lock(game_id):
         game = db.games.get(game_id)
         if not game:
             raise HTTPException(status_code=404, detail="Game not found")
+        if current_user:
+            assert_resource_access(current_user, game.get("owner_id"))
         num = game["engine"].draw()
         if num is None:
             game["status"] = "finished"
@@ -308,8 +320,13 @@ MAX_ID_COLLISION_RETRIES = 5
 @app.post("/cards/batch")
 async def generate_cards(
     req: CardBatchRequest,
-    _admin: bool = Depends(verify_admin),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
+    # Enforce per-user persistent cards quota if persistence was requested
+    if req.persistent and current_user:
+        from auth.quotas import check_persistent_cards_quota
+        await check_persistent_cards_quota(current_user, additional_cards=req.count)
+
     cards = []
     for _ in range(req.count):
         grid = generate_75_ball_card()
@@ -331,15 +348,15 @@ async def generate_cards(
         try:
             db.set_card(
                 public_id,
-                {"grid": grid, "serial": serial, "game_id": req.game_id},
+                {
+                    "grid": grid,
+                    "serial": serial,
+                    "game_id": req.game_id,
+                    "owner_id": current_user.id if current_user else None,
+                },
                 persistent=req.persistent,
             )
         except PersistentStorageFullError as exc:
-            # Explicit persistence was requested but the persistent store
-            # is at capacity. Fail clearly rather than silently falling
-            # back to ephemeral storage for the remaining cards, since
-            # that would mean some of a batch is durable and some isn't
-            # with no way for the caller to tell which.
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PersistentStorageUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -383,13 +400,24 @@ def get_card(
 
 @app.get("/games/{game_id}/cards")
 def get_game_cards(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
-    _admin: bool = Depends(verify_admin),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\-]+$"),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
-    """Get all cards for a specific game"""
+    """Get all cards for a specific game (admin: all, operator: own only)."""
+    game = db.games.get(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if current_user:
+        assert_resource_access(current_user, game.get("owner_id"))
+
     game_cards = []
     for public_id, card_data in db.cards.items():
         if card_data.get("game_id") == game_id:
+            # Operators can only see their own cards; ADMIN sees all
+            if current_user and not has_role(current_user, "ADMIN"):
+                card_owner = card_data.get("owner_id")
+                if card_owner is not None and card_owner != current_user.id:
+                    continue
             game_cards.append(
                 {
                     "public_id": public_id,
