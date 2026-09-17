@@ -175,6 +175,15 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
         await websocket.close(code=1008, reason="Invalid game ID format")
         return
 
+    # Validate Origin header against CORS allowlist to prevent cross-origin
+    # WebSocket hijacking. A malicious site could otherwise silently connect
+    # and stream game state (drawn numbers, celebrations) for any game.
+    origin = websocket.headers.get("origin")
+    if origin and "*" not in cors_origins:
+        if origin not in cors_origins:
+            await websocket.close(code=1008, reason="Origin not allowed")
+            return
+
     connected = await manager.connect(game_id, websocket)
     if not connected:
         await websocket.close(code=1008, reason="Connection limit reached")

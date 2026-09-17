@@ -72,7 +72,10 @@ const BingoApp = () => {
   // the privileged start/draw/stage/cards-batch/cards-list requests). This
   // is stored client-side only and is opt-in: if the backend has no
   // ADMIN_API_KEY configured, an empty value here is simply ignored.
-  const [adminKey, setAdminKey] = useState(() => localStorage.getItem('bingo_admin_key') || '');
+  // Using sessionStorage instead of localStorage: the key is scoped to the
+  // tab session and cleared on close, reducing exposure to XSS and browser
+  // extensions that can read persistent storage.
+  const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem('bingo_admin_key') || '');
 
   // Authoritative Ball History State
   const [currentBall, setCurrentBall] = useState(null);
@@ -97,9 +100,9 @@ const BingoApp = () => {
   const POLL_INTERVAL = config.pollInterval;
   const CARD_FETCH_INTERVAL = config.cardFetchInterval;
 
-  // Persist the admin key locally, mirroring the existing gameId pattern.
+  // Persist the admin key in sessionStorage, mirroring the existing gameId pattern.
   useEffect(() => {
-    localStorage.setItem('bingo_admin_key', adminKey);
+    sessionStorage.setItem('bingo_admin_key', adminKey);
   }, [adminKey]);
 
   // Header(s) to attach to requests that may require admin authorization.
@@ -1082,4 +1085,4 @@ const BingoApp = () => {
   );
 };
 
-export default BingoApp;
+export default BingoApp;
