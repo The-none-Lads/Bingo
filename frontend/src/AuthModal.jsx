@@ -290,6 +290,38 @@ export const AuthModal = ({ isOpen, onClose, currentUser, onAuthSuccess, onLogou
             >
               {loading ? 'Authenticating...' : 'Sign In'}
             </button>
+
+            {/* OIDC Login Button */}
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={async () => {
+                  setLoading(true);
+                  try {
+                    const res = await fetch(`${apiBaseUrl}/auth/oidc/status`);
+                    const data = await res.json();
+                    if (data.enabled) {
+                      const loginRes = await fetch(`${apiBaseUrl}/auth/oidc/login`);
+                      const loginData = await loginRes.json();
+                      if (loginData.authorization_url) {
+                        window.location.href = loginData.authorization_url;
+                      }
+                    } else {
+                      setError('SSO is not enabled on this server');
+                    }
+                  } catch (err) {
+                    setError('Failed to initiate SSO login');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Key className="w-4 h-4" />
+                Sign in with SSO
+              </button>
+            </div>
           </form>
         ) : (
           /* Register Form */

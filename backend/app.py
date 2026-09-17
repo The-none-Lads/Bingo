@@ -109,6 +109,8 @@ app.add_middleware(
 app.include_router(auth_router)
 from routes.admin import router as admin_router
 app.include_router(admin_router)
+from routes.oidc import router as oidc_router
+app.include_router(oidc_router)
 
 
 # -------------------------
