@@ -156,3 +156,30 @@ class AuthStatusResponse(BaseModel):
 class MessageResponse(BaseModel):
     message: str
 
+
+# --- Admin schemas ---
+
+
+class UserAdminResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    role: str
+    is_active: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    auth_providers: List[str] = []
+    session_count: int = 0
+
+
+class UserUpdateRequest(BaseModel):
+    role: Optional[str] = Field(None, pattern=r"^(USER|OPERATOR|ADMIN)$")
+    is_active: Optional[bool] = None
+
+
+class UserQuotaInfo(BaseModel):
+    active_games: int
+    max_games: int
+    persistent_cards: int
+    max_persistent_cards: int
+

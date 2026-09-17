@@ -92,13 +92,13 @@ class CardRepository:
     def _persistent_get(self, public_id: str) -> Optional[Dict[str, Any]]:
         with self._db_lock:
             row = self._conn.execute(
-                "SELECT serial, game_id, grid FROM cards WHERE public_id = ?",
+                "SELECT serial, game_id, grid, owner_id FROM cards WHERE public_id = ?",
                 (public_id,),
             ).fetchone()
         if row is None:
             return None
-        serial, game_id, grid_json = row
-        return {"serial": serial, "game_id": game_id, "grid": json.loads(grid_json)}
+        serial, game_id, grid_json, owner_id = row
+        return {"serial": serial, "game_id": game_id, "grid": json.loads(grid_json), "owner_id": owner_id}
 
     def _persistent_contains(self, public_id: str) -> bool:
         with self._db_lock:
@@ -110,12 +110,13 @@ class CardRepository:
     def _persistent_set(self, public_id: str, card_data: Dict[str, Any]) -> None:
         with self._db_lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO cards (public_id, serial, game_id, grid) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO cards (public_id, serial, game_id, grid, owner_id) VALUES (?, ?, ?, ?, ?)",
                 (
                     public_id,
                     card_data["serial"],
                     card_data.get("game_id"),
                     json.dumps(card_data["grid"]),
+                    card_data.get("owner_id"),
                 ),
             )
             self._conn.commit()
@@ -123,13 +124,14 @@ class CardRepository:
     def _persistent_items(self) -> Iterator[Tuple[str, Dict[str, Any]]]:
         with self._db_lock:
             rows = self._conn.execute(
-                "SELECT public_id, serial, game_id, grid FROM cards"
+                "SELECT public_id, serial, game_id, grid, owner_id FROM cards"
             ).fetchall()
-        for public_id, serial, game_id, grid_json in rows:
+        for public_id, serial, game_id, grid_json, owner_id in rows:
             yield public_id, {
                 "serial": serial,
                 "game_id": game_id,
                 "grid": json.loads(grid_json),
+                "owner_id": owner_id,
             }
 
     # -------------------------
@@ -162,6 +164,13 @@ class CardRepository:
         serves, but callers should not call this in a hot path."""
         yield from self._memory.items()
         yield from self._persistent_items()
+
+    def by_owner(self, owner_id: Optional[str]) -> Iterator[Tuple[str, Dict[str, Any]]]:
+        """Yield cards belonging to owner_id. If owner_id is None, yield system-owned cards."""
+        for public_id, card_data in self.items():
+            card_owner = card_data.get("owner_id")
+            if card_owner == owner_id:
+                yield public_id, card_data
 
     # -------------------------
     # Writes
@@ -279,6 +288,13 @@ class MemoryDB:
             if oldest_key in self._locks:
                 del self._locks[oldest_key]
         self.games[game_id] = game_data
+
+    def get_game_owner(self, game_id: str) -> Optional[str]:
+        """Get the owner_id of a game, or None if not found/system-owned."""
+        game = self.games.get(game_id)
+        if not game:
+            return None
+        return game.get("owner_id")
 
     def set_card(
         self, public_id: str, card_data: Dict[str, Any], persistent: bool = False

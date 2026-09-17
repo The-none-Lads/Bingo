@@ -2,7 +2,7 @@ import os
 from typing import Optional
 
 from auth.csrf import verify_csrf_token
-from auth.dependencies import get_current_user, require_authenticated_user
+from auth.dependencies import get_current_user, require_admin, require_authenticated_user
 from auth.proxy import get_client_ip
 from auth.rate_limit import auth_rate_limiter
 from auth.security import (
@@ -28,7 +28,9 @@ from models import (
     MessageResponse,
     PasswordChangeRequest,
     RegisterRequest,
+    UserQuotaInfo,
     UserResponse,
+    UserUpdateRequest,
 )
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,8 +99,8 @@ async def register(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
-    # First user registered in an empty database becomes ADMIN
-    assigned_role = "ADMIN" if total_users == 0 else "USER"
+    # First user registered in an empty database becomes ADMIN, others become OPERATOR
+    assigned_role = "ADMIN" if total_users == 0 else "OPERATOR"
 
     new_user = User(
         username=req.username.strip(),
@@ -305,3 +307,188 @@ async def change_password(
     await db.commit()
 
     return {"message": "Password updated successfully."}
+
+
+# -------------------------
+# Admin user management
+# -------------------------
+
+
+@router.get(
+    "/admin/users",
+    response_model=list[UserResponse],
+    summary="List all users (ADMIN only)",
+)
+async def list_users(
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List all registered users. ADMIN only."""
+    stmt = select(User).order_by(User.created_at.desc())
+    result = await db.execute(stmt)
+    users = result.scalars().all()
+    return [format_user_response(u) for u in users]
+
+
+@router.get(
+    "/admin/users/{user_id}",
+    response_model=UserResponse,
+    summary="Get user by ID (ADMIN only)",
+)
+async def get_user(
+    user_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Get a specific user's profile. ADMIN only."""
+    stmt = select(User).where(User.id == user_id)
+    target_user = (await db.execute(stmt)).scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return format_user_response(target_user)
+
+
+@router.patch(
+    "/admin/users/{user_id}",
+    response_model=UserResponse,
+    summary="Update user role/status (ADMIN only)",
+)
+async def update_user(
+    user_id: str,
+    req: UserUpdateRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Update a user's role or active status. ADMIN only."""
+    stmt = select(User).where(User.id == user_id)
+    target_user = (await db.execute(stmt)).scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent self-demotion/deactivation
+    if target_user.id == user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot modify your own account through this endpoint.",
+        )
+
+    if req.role is not None:
+        target_user.role = req.role
+    if req.is_active is not None:
+        target_user.is_active = req.is_active
+
+    await db.commit()
+    await db.refresh(target_user)
+    return format_user_response(target_user)
+
+
+@router.delete(
+    "/admin/users/{user_id}",
+    response_model=MessageResponse,
+    summary="Delete a user (ADMIN only)",
+)
+async def delete_user(
+    user_id: str,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Delete a user account. ADMIN only."""
+    stmt = select(User).where(User.id == user_id)
+    target_user = (await db.execute(stmt)).scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target_user.id == user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete your own account.",
+        )
+
+    # Revoke all sessions first
+    await revoke_all_user_sessions(db, target_user.id)
+    await db.delete(target_user)
+    await db.commit()
+    return {"message": f"User {target_user.username} deleted."}
+
+
+# -------------------------
+# Quota info
+# -------------------------
+
+
+@router.get(
+    "/quota",
+    response_model=UserQuotaInfo,
+    summary="Get current user's quota usage",
+)
+async def get_quota(
+    user: User = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Get the current user's resource quota usage."""
+    from auth.quotas import get_user_quota_info
+
+    quota = await get_user_quota_info(user)
+    return UserQuotaInfo(**quota)
+
+
+# -------------------------
+# User's own resources
+# -------------------------
+
+
+@router.get(
+    "/my/games",
+    summary="List current user's games",
+)
+async def list_my_games(
+    user: User = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List all games owned by the current user. ADMIN sees all games."""
+    from storage.db import db as memory_db
+
+    games = []
+    for gid, game in memory_db.games.items():
+        owner_id = game.get("owner_id")
+        if user.role == "ADMIN" or owner_id == user.id or owner_id is None:
+            games.append({
+                "game_id": gid,
+                "mode": game.get("mode"),
+                "stage": game.get("stage"),
+                "status": game.get("status"),
+                "ball_set": game.get("ball_set"),
+                "owner_id": owner_id,
+                "drawn_count": len(game.get("drawn", [])),
+            })
+    return {"count": len(games), "games": games}
+
+
+@router.delete(
+    "/my/games/{game_id}",
+    response_model=MessageResponse,
+    summary="Delete a game",
+)
+async def delete_my_game(
+    game_id: str,
+    user: User = Depends(require_authenticated_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Delete a game. Users can only delete their own games; ADMIN can delete any."""
+    from storage.db import db as memory_db
+
+    game = memory_db.games.get(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    owner_id = game.get("owner_id")
+    if user.role != "ADMIN" and owner_id != user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: You can only delete your own games.",
+        )
+
+    del memory_db.games[game_id]
+    if game_id in memory_db._locks:
+        del memory_db._locks[game_id]
+    return {"message": f"Game {game_id} deleted."}
