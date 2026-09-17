@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield } from 'lucide-react';
+import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield, ExternalLink } from 'lucide-react';
 import { AuthModal } from './AuthModal';
 import { AdminDashboard } from './AdminDashboard';
+import { PlayerView } from './PlayerView';
 import { config } from './config';
 import { getBallTransition } from './ballHistory';
 
@@ -69,6 +70,8 @@ const BingoApp = () => {
   const [openCard, setOpenCard] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [showAllDrawn, setShowAllDrawn] = useState(false);
+  const [playerLinks, setPlayerLinks] = useState([]);
+  const [playerViewToken, setPlayerViewToken] = useState(null);
 
   // Authentication State
   const [currentUser, setCurrentUser] = useState(null);
@@ -255,6 +258,20 @@ const BingoApp = () => {
     }
   }, [gameId, wsConnected, updateGameState, API_BASE]);
 
+  const fetchPlayerLinks = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/games/${gameId}/links`, {
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPlayerLinks(data.links.map(l => ({ ...l, token: null })));
+      }
+    } catch (err) {
+      console.error('Failed to fetch links:', err);
+    }
+  }, [gameId, API_BASE]);
+
   // Handle Game ID change
   useEffect(() => {
     localStorage.setItem('bingo_game_id', gameId);
@@ -265,6 +282,8 @@ const BingoApp = () => {
     setDroppingBall(null);
     fetchCardsForGame();
     fetchGameState();
+    // Load existing player links for this game
+    fetchPlayerLinks();
   }, [gameId, fetchCardsForGame, fetchGameState]);
 
   // Confetti Animation with safe cleanup
@@ -523,6 +542,39 @@ const BingoApp = () => {
       diagonals: 'Diagonals'
     };
     return names[mode] || mode;
+  };
+
+  // Player link management
+  const createPlayerLink = async (policy = 'LINK_ONLY', password = null) => {
+    try {
+      const res = await fetch(`${API_BASE}/games/${gameId}/links`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ policy, password })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPlayerLinks(prev => [...prev, { id: data.link_id, token: data.access_token, policy: data.policy }]);
+      } else {
+        const err = await res.json();
+        console.error('Failed to create link:', err);
+      }
+    } catch (err) {
+      console.error('Failed to create link:', err);
+    }
+  };
+
+  const revokePlayerLink = async (linkId) => {
+    try {
+      await fetch(`${API_BASE}/games/${gameId}/links/${linkId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      setPlayerLinks(prev => prev.filter(l => l.id !== linkId));
+    } catch (err) {
+      console.error('Failed to revoke link:', err);
+    }
   };
 
   // Display View - Casino Style with 5-Ball History
@@ -885,6 +937,69 @@ const BingoApp = () => {
                   </div>
                 </div>
               )}
+
+              {/* Player Links */}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                  <ExternalLink className="w-5 h-5 text-purple-600" />
+                  Player Links
+                </h3>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <select
+                      id="link-policy"
+                      className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                      defaultValue="LINK_ONLY"
+                    >
+                      <option value="PUBLIC">Public (no link needed)</option>
+                      <option value="LINK_ONLY">Link Required</option>
+                      <option value="PASSWORD">Password Protected</option>
+                    </select>
+                  </div>
+                  <input
+                    type="text"
+                    id="link-password"
+                    placeholder="Password (optional, for PASSWORD policy)"
+                    className="w-full px-3 py-2 border rounded-lg text-sm"
+                  />
+                  <button
+                    onClick={() => {
+                      const policy = document.getElementById('link-policy').value;
+                      const password = document.getElementById('link-password').value || null;
+                      createPlayerLink(policy, password);
+                    }}
+                    className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all text-sm font-medium"
+                  >
+                    Generate Player Link
+                  </button>
+                  {playerLinks.length > 0 && (
+                    <div className="space-y-2 mt-3">
+                      {playerLinks.map((link) => (
+                        <div key={link.id} className="flex items-center gap-2 bg-gray-50 rounded-lg p-2">
+                          <input
+                            type="text"
+                            readOnly
+                            value={`${window.location.origin}/b/${link.token}`}
+                            className="flex-1 px-2 py-1 text-xs border rounded bg-white"
+                          />
+                          <button
+                            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/b/${link.token}`)}
+                            className="px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300"
+                          >
+                            Copy
+                          </button>
+                          <button
+                            onClick={() => revokePlayerLink(link.id)}
+                            className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200"
+                          >
+                            Revoke
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
