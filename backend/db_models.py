@@ -112,6 +112,62 @@ class UserSession(Base):
     user: Mapped["User"] = relationship("User", back_populates="sessions")
 
 
+class GameAccessLink(Base):
+    __tablename__ = "game_access_links"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    game_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    policy: Mapped[str] = mapped_column(
+        String(32), default="LINK_ONLY", nullable=False
+    )  # "PUBLIC", "LINK_ONLY", "PASSWORD"
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    use_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    max_uses: Mapped[Optional[int]] = mapped_column(nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class PlayerSession(Base):
+    __tablename__ = "player_sessions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    game_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True
+    )
+    link_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("game_access_links.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_token_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    player_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
 class CardModel(Base):
     __tablename__ = "cards"
 
