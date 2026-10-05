@@ -47,6 +47,13 @@ def hash_password(password: str) -> str:
     return _hasher.hash(password)
 
 
+def hash_game_password(password: str) -> str:
+    """Hash a game party access password or PIN (4-128 characters) using Argon2id."""
+    if not isinstance(password, str) or len(password) < 4 or len(password) > 128:
+        raise ValueError("Game password must be between 4 and 128 characters long.")
+    return _hasher.hash(password)
+
+
 def verify_password(password: str, password_hash: str) -> bool:
     """
     Verify a plaintext password against an Argon2id hash.

@@ -38,7 +38,7 @@ router = APIRouter(tags=["Player Access"])
 
 class CreateLinkRequest(BaseModel):
     policy: str = Field("LINK_ONLY", pattern=r"^(PUBLIC|LINK_ONLY|PASSWORD)$")
-    password: Optional[str] = Field(None, min_length=4, max_length=128)
+    password: Optional[str] = Field(None, max_length=128)
     expires_in_seconds: Optional[int] = Field(None, ge=60, le=2592000)
     max_uses: Optional[int] = Field(None, ge=1, le=1000)
 
@@ -90,23 +90,27 @@ async def create_link(
     if req is None:
         req = CreateLinkRequest()
 
-    if req.policy == "PASSWORD" and not req.password:
-        raise HTTPException(status_code=400, detail="Password required for PASSWORD policy")
+    password = None
+    if req.policy == "PASSWORD":
+        if not req.password or len(req.password.strip()) < 4:
+            raise HTTPException(
+                status_code=400,
+                detail="Password of at least 4 characters is required for PASSWORD policy",
+            )
+        password = req.password.strip()
 
     expires_at = None
     if req.expires_in_seconds:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=req.expires_in_seconds)
 
     user_id = current_user.id if current_user else game.get("owner_id")
-    if not user_id:
-        raise HTTPException(status_code=400, detail="Cannot create link without owner")
 
     raw_token = await create_access_link(
         db=db_session,
         game_id=game_id,
         created_by=user_id,
         policy=req.policy,
-        password=req.password,
+        password=password,
         expires_at=expires_at,
         max_uses=req.max_uses,
     )

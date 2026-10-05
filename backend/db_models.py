@@ -121,8 +121,8 @@ class GameAccessLink(Base):
     game_id: Mapped[str] = mapped_column(
         String(64), nullable=False, index=True
     )
-    created_by: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    created_by: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
     )
     token_hash: Mapped[str] = mapped_column(
         String(64), unique=True, nullable=False, index=True

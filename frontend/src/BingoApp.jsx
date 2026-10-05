@@ -585,9 +585,9 @@ const BingoApp = () => {
     try {
       const res = await fetch(`${API_BASE}/games/${gameId}/links`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         credentials: 'include',
-        body: JSON.stringify({ policy, password })
+        body: JSON.stringify({ policy, password: password || undefined })
       });
       if (res.ok) {
         const data = await res.json();
@@ -605,6 +605,7 @@ const BingoApp = () => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/links/${linkId}`, {
         method: 'DELETE',
+        headers: adminHeaders(),
         credentials: 'include'
       });
       setPlayerLinks(prev => prev.filter(l => l.id !== linkId));

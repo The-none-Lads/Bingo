@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Optional
 
 from auth.rate_limit import auth_rate_limiter
-from auth.security import hash_password, verify_password
+from auth.security import hash_game_password, hash_password, verify_password
 from database import get_db_session
 from db_models import GameAccessLink, PlayerSession
 from fastapi import HTTPException
@@ -45,7 +45,7 @@ def hash_access_token(raw_token: str) -> str:
 async def create_access_link(
     db: AsyncSession,
     game_id: str,
-    created_by: str,
+    created_by: Optional[str] = None,
     policy: str = "LINK_ONLY",
     password: Optional[str] = None,
     expires_at: Optional[datetime] = None,
@@ -62,8 +62,8 @@ async def create_access_link(
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=get_link_lifetime())
 
     password_hash = None
-    if password:
-        password_hash = hash_password(password)
+    if policy == "PASSWORD" and password and password.strip():
+        password_hash = hash_game_password(password.strip())
 
     link = GameAccessLink(
         game_id=game_id,
