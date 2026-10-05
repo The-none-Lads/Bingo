@@ -15,7 +15,7 @@ from auth.player_access import (
     validate_player_session,
 )
 from auth.rbac import assert_resource_access, require_operator_with_bootstrap
-from database import get_db_session
+from database import get_db_session, get_sessionmaker
 from db_models import GameAccessLink, User
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
 from models import GameStateResponse, MessageResponse
@@ -307,8 +307,9 @@ async def player_websocket(websocket: WebSocket, game_id: str):
         await websocket.close(code=1008, reason="Player session required")
         return
 
-    db_session = next(get_db_session())
-    session = await validate_player_session(db_session, player_token, game_id)
+    session_factory = get_sessionmaker()
+    async with session_factory() as db_session:
+        session = await validate_player_session(db_session, player_token, game_id)
 
     if not session:
         await websocket.close(code=1008, reason="Invalid player session")
