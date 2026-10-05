@@ -24,11 +24,12 @@ def format_user_admin_response(user: User) -> UserAdminResponse:
     now = datetime.now(timezone.utc)
     active_sessions = []
     for s in user.sessions:
-        expires = s.expires_at
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if expires > now:
-            active_sessions.append(s)
+        exp = s.expires_at
+        if exp is not None:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp > now:
+                active_sessions.append(s)
     return UserAdminResponse(
         id=user.id,
         username=user.username,
@@ -126,6 +127,42 @@ async def update_user(
     await db_session.commit()
     await db_session.refresh(user)
     return format_user_admin_response(user)
+
+
+@router.delete(
+    "/users/{user_id}",
+    response_model=MessageResponse,
+    summary="Delete a user account (admin)",
+)
+async def admin_delete_user(
+    user_id: str,
+    current_admin: User = Depends(require_admin),
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    """Delete a user account. Cannot delete self or last ADMIN."""
+    user = (await db_session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.id == current_admin.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account.")
+
+    if user.role == "ADMIN":
+        admin_count = (
+            await db_session.execute(
+                select(func.count(User.id)).where(
+                    User.role == "ADMIN", User.is_active == True
+                )
+            )
+        ).scalar_one()
+        if admin_count <= 1:
+            raise HTTPException(status_code=409, detail="Cannot delete the last active administrator")
+
+    from auth.session import revoke_all_user_sessions
+    await revoke_all_user_sessions(db_session, user.id)
+    await db_session.delete(user)
+    await db_session.commit()
+    return MessageResponse(message=f"User {user.username} deleted.")
 
 
 @router.post(

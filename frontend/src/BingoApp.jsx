@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield, ExternalLink } from 'lucide-react';
+import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield, ExternalLink, Users } from 'lucide-react';
 import { AuthModal } from './AuthModal';
 import { AdminDashboard } from './AdminDashboard';
 import { PlayerView } from './PlayerView';
@@ -126,6 +126,42 @@ const BingoApp = () => {
   useEffect(() => {
     fetchCurrentUser();
   }, [fetchCurrentUser]);
+
+  // Detect URL parameters for player token or view routing
+  useEffect(() => {
+    try {
+      const pathname = window.location.pathname;
+      const searchParams = new URLSearchParams(window.location.search);
+      const tokenParam = searchParams.get('token');
+      const gameParam = searchParams.get('game');
+      const viewParam = searchParams.get('view');
+
+      if (gameParam) {
+        setGameId(gameParam);
+      }
+
+      if (pathname.startsWith('/b/')) {
+        const pathToken = pathname.replace(/^\/b\//, '').split('/')[0].split('?')[0];
+        if (pathToken) {
+          setPlayerViewToken(pathToken);
+          setView('player');
+          return;
+        }
+      }
+
+      if (tokenParam) {
+        setPlayerViewToken(tokenParam);
+        setView('player');
+        return;
+      }
+
+      if (viewParam && ['display', 'admin', 'system-admin', 'player'].includes(viewParam)) {
+        setView(viewParam);
+      }
+    } catch (e) {
+      console.error('Failed to parse URL routing:', e);
+    }
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -614,7 +650,7 @@ const BingoApp = () => {
               </h1>
               <div className="absolute -bottom-2 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 rounded"></div>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <input
                 type="text"
                 value={gameId}
@@ -623,18 +659,39 @@ const BingoApp = () => {
                 placeholder="Game ID"
               />
               <button
+                onClick={() => setView('player')}
+                className="px-4 py-2.5 bg-black/50 border border-yellow-500 text-yellow-300 font-bold rounded-lg hover:bg-yellow-500/20 transition-all flex items-center gap-2"
+                title="Player View"
+              >
+                <Users className="w-5 h-5" />
+                <span className="hidden md:inline">Player View</span>
+              </button>
+              <button
                 onClick={() => setIsAuthModalOpen(true)}
                 className="px-4 py-2.5 bg-black/50 border border-yellow-500 text-yellow-300 font-bold rounded-lg hover:bg-yellow-500/20 transition-all flex items-center gap-2"
-                title={currentUser ? `Signed in as ${currentUser.username}` : 'Sign In'}
+                title={currentUser ? `Signed in as ${currentUser.username} (${currentUser.role})` : 'Sign In'}
               >
                 <User className="w-5 h-5" />
                 <span className="hidden md:inline">{currentUser ? currentUser.username : 'Sign In'}</span>
+                {currentUser?.role === 'ADMIN' && <Shield className="w-4 h-4 text-red-400" />}
               </button>
+              {currentUser?.role === 'ADMIN' && (
+                <button
+                  onClick={() => setView('system-admin')}
+                  className="px-4 py-2.5 bg-red-950/70 border border-red-500 text-red-300 font-bold rounded-lg hover:bg-red-900/50 transition-all flex items-center gap-2"
+                  title="System Administration"
+                >
+                  <Shield className="w-5 h-5 text-red-400" />
+                  <span className="hidden md:inline">System Admin</span>
+                </button>
+              )}
               <button
                 onClick={() => setView('admin')}
-                className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg"
+                className="px-5 py-2.5 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg flex items-center gap-2"
+                title="Host Controls"
               >
-                <Settings className="w-6 h-6" />
+                <Settings className="w-5 h-5" />
+                <span className="hidden lg:inline">Host Controls</span>
               </button>
             </div>
           </div>
@@ -777,24 +834,33 @@ const BingoApp = () => {
     );
   }
 
-  // Admin View
-  // If user is ADMIN, show the full system dashboard
-  if (view === 'admin' && currentUser?.role === 'ADMIN') {
+  // System Admin Dashboard View
+  if (view === 'system-admin') {
     return (
       <AdminDashboard
         currentUser={currentUser}
+        onClose={() => setView('admin')}
+      />
+    );
+  }
+
+  // Player View
+  if (view === 'player') {
+    return (
+      <PlayerView
+        initialToken={playerViewToken || ''}
         onClose={() => setView('display')}
       />
     );
   }
 
-  // Otherwise show the operator game management view
+  // Host Game Controls View (view === 'admin' or fallback)
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <div className="flex items-center gap-4">
-            <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
+            <h1 className="text-4xl font-bold text-gray-900">Host Game Controls</h1>
             <div
               className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
                 wsConnected ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
@@ -807,70 +873,106 @@ const BingoApp = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {currentUser?.role === 'ADMIN' && (
+              <button
+                onClick={() => setView('system-admin')}
+                className="px-4 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg hover:bg-red-100 transition-all text-sm font-medium flex items-center gap-2"
+                title="Open System Administration Dashboard"
+              >
+                <Shield className="w-4 h-4 text-red-600" />
+                <span>System Admin</span>
+              </button>
+            )}
+            <button
+              onClick={() => setView('player')}
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-gray-700 text-sm font-medium"
+              title="Open Player View"
+            >
+              <Users className="w-4 h-4" />
+              <span>Player View</span>
+            </button>
             <button
               onClick={() => setIsAuthModalOpen(true)}
               className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-gray-700 text-sm font-medium"
-              title={currentUser ? `Signed in as ${currentUser.username}` : 'Sign In'}
+              title={currentUser ? `Signed in as ${currentUser.username} (${currentUser.role})` : 'Sign In'}
             >
               <User className="w-4 h-4" />
               <span>{currentUser ? currentUser.username : 'Sign In'}</span>
             </button>
             <button
               onClick={() => setView('display')}
-              className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all"
+              className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all font-medium"
             >
               Switch to Display View
             </button>
           </div>
         </div>
 
-          {/* Admin System Dashboard Button (ADMIN only) */}
-          {currentUser?.role === 'ADMIN' && (
-            <div className="mb-6">
-              <button
-                onClick={() => setView('admin')}
-                className="px-4 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg hover:bg-red-100 transition-all text-sm font-medium flex items-center gap-2"
-              >
-                <Shield className="w-4 h-4" />
-                System Administration
-              </button>
-            </div>
-          )}
-
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Game Controls */}
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <Play className="w-6 h-6" />
-              Game Controls
-            </h2>
+            <Play className="w-6 h-6" />
+            Game Controls
+          </h2>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">Game ID</label>
-                <input
-                  type="text"
-                  value={gameId}
-                  onChange={(e) => setGameId(e.target.value)}
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                />
-              </div>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Game ID</label>
+              <input
+                type="text"
+                value={gameId}
+                onChange={(e) => setGameId(e.target.value)}
+                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+              />
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Signed in as
-                  <span className="ml-2 text-xs font-normal text-gray-500">
-                    ({currentUser?.role || 'Guest'})
-                  </span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <div className="px-4 py-2 bg-purple-50 border border-purple-200 rounded-lg text-purple-700 font-medium">
-                    {currentUser?.username || 'Anonymous'}
-                  </div>
-                  {currentUser?.role === 'ADMIN' && (
-                    <Shield className="w-5 h-5 text-red-500" />
-                  )}
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Admin Key (optional)
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  Required only if ADMIN_API_KEY is configured on the server
+                </span>
+              </label>
+              <input
+                type="password"
+                value={adminKey}
+                onChange={(e) => setAdminKey(e.target.value)}
+                placeholder="Leave empty if server doesn't require an admin key"
+                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none font-mono text-sm"
+                autoComplete="off"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Signed in as
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  ({currentUser?.role || 'Guest / Unauthenticated'})
+                </span>
+              </label>
+              <div className="flex items-center gap-2">
+                <div className="px-4 py-2 bg-purple-50 border border-purple-200 rounded-lg text-purple-700 font-medium">
+                  {currentUser?.username || 'Anonymous'}
                 </div>
+                {currentUser?.role === 'ADMIN' && (
+                  <span className="px-2.5 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded-full flex items-center gap-1">
+                    <Shield className="w-3.5 h-3.5 text-red-600" />
+                    ADMIN
+                  </span>
+                )}
+                {currentUser?.role === 'OPERATOR' && (
+                  <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
+                    OPERATOR
+                  </span>
+                )}
+                {currentUser?.role === 'AUDITOR' && (
+                  <span className="px-2.5 py-1 bg-gray-100 text-gray-800 text-xs font-semibold rounded-full">
+                    AUDITOR
+                  </span>
+                )}
               </div>
+            </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <button

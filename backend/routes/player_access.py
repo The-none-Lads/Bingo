@@ -74,7 +74,7 @@ class GameAccessPolicyRequest(BaseModel):
 
 @router.post("/games/{game_id}/links", response_model=CreateLinkResponse)
 async def create_link(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\-]+$"),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
     req: Optional[CreateLinkRequest] = None,
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
     db_session: AsyncSession = Depends(get_db_session),
@@ -127,7 +127,7 @@ async def create_link(
 
 @router.get("/games/{game_id}/links")
 async def list_links(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\-]+$"),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
     db_session: AsyncSession = Depends(get_db_session),
 ):

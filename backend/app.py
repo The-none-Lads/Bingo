@@ -109,7 +109,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=allow_credentials,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
 )
 
@@ -236,7 +236,7 @@ async def broadcast_game_state(game_id: str):
 @app.post("/games/{game_id}/start")
 async def start_game(
     req: CreateGameRequest,
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\\-]+$"),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
     # Enforce per-user active games quota
@@ -262,7 +262,7 @@ async def start_game(
 
 @app.post("/games/{game_id}/stage/{required_rows}")
 async def set_stage(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\-]+$"),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
     required_rows: int = Path(..., ge=1, le=5),
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
@@ -279,7 +279,7 @@ async def set_stage(
 
 @app.post("/games/{game_id}/draw")
 async def draw_number(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\-]+$"),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
     async with db.get_lock(game_id):
@@ -412,7 +412,7 @@ def get_card(
 
 @app.get("/games/{game_id}/cards")
 def get_game_cards(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\\-]+$"),
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
     """Get all cards for a specific game (admin: all, operator: own only)."""

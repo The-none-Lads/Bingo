@@ -2,6 +2,7 @@ import os
 import secrets
 from typing import Optional
 
+from auth.proxy import get_client_ip
 from auth.session import SESSION_COOKIE_NAME, get_session_user
 from database import get_db_session
 from db_models import User

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Wifi, WifiOff, Users, Trophy, CircleDot } from 'lucide-react';
+import { config } from './config';
 
-const API_BASE = window.__CONFIG__?.apiBaseUrl || 'http://localhost:8000';
+const API_BASE = config.apiBaseUrl;
 
-export function PlayerView({ onClose }) {
-  const [token, setToken] = useState('');
+export function PlayerView({ initialToken = '', onClose }) {
+  const [token, setToken] = useState(initialToken || '');
   const [playerName, setPlayerName] = useState('');
   const [password, setPassword] = useState('');
   const [needsPassword, setNeedsPassword] = useState(false);
@@ -17,7 +18,7 @@ export function PlayerView({ onClose }) {
   const playerTokenRef = useRef(null);
 
   const connectWebSocket = useCallback((gameId, playerToken) => {
-    const wsBase = window.__CONFIG__?.wsBaseUrl || `ws://${window.location.host}`;
+    const wsBase = config.wsBaseUrl.replace(/\/ws$/, '');
     const wsUrl = `${wsBase}/ws/player/${gameId}?token=${encodeURIComponent(playerToken)}`;
     const ws = new WebSocket(wsUrl);
 
@@ -47,12 +48,14 @@ export function PlayerView({ onClose }) {
     setError('');
     setLoading(true);
 
+    const cleanToken = token.trim().replace(/^.*\/b\//, '').split('?')[0];
+
     try {
       const res = await fetch(`${API_BASE}/b/redeem`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token,
+          token: cleanToken,
           password: needsPassword ? password : undefined,
           player_name: playerName || undefined,
         }),

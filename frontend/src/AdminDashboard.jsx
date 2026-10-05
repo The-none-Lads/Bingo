@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Activity, Database, Shield, Power, RotateCcw, Search, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import { config } from './config';
 
-const API_BASE = window.__CONFIG__?.apiBaseUrl || 'http://localhost:8000';
+const API_BASE = config.apiBaseUrl;
 
 export function AdminDashboard({ currentUser, onClose }) {
   const [activeTab, setActiveTab] = useState('users');

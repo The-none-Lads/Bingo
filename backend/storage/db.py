@@ -81,6 +81,15 @@ class CardRepository:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """)
+        # Ensure newer columns exist if migrating from an older database file
+        cursor = conn.execute("PRAGMA table_info(cards)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        if "owner_id" not in existing_cols:
+            conn.execute("ALTER TABLE cards ADD COLUMN owner_id TEXT")
+        if "is_persistent" not in existing_cols:
+            conn.execute("ALTER TABLE cards ADD COLUMN is_persistent BOOLEAN DEFAULT 1")
+        if "created_at" not in existing_cols:
+            conn.execute("ALTER TABLE cards ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         conn.commit()
         return conn
 

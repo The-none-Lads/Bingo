@@ -18,8 +18,11 @@ import secrets
 from typing import Optional
 
 from auth.dependencies import get_current_user, require_authenticated_user
+from database import get_db_session
 from db_models import User
 from fastapi import Depends, Header, HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Role hierarchy: higher number = more privileges
 ROLE_HIERARCHY = {
@@ -53,6 +56,7 @@ class RBACError(HTTPException):
 
 async def require_operator_with_bootstrap(
     user: Optional[User] = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db_session),
     x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
     authorization: Optional[str] = Header(None),
 ) -> Optional[User]:
@@ -63,11 +67,6 @@ async def require_operator_with_bootstrap(
     Also accepts ADMIN_API_KEY/ADMIN_SECRET via X-Admin-Key or Authorization header
     for legacy/admin access.
     """
-    from database import get_db_session
-    from sqlalchemy import func, select
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    db_session: AsyncSession = await anext(get_db_session())
     result = await db_session.execute(select(func.count(User.id)))
     total_users = result.scalar_one()
 
@@ -147,6 +146,7 @@ def assert_resource_access(user: User, owner_id: Optional[str]) -> None:
 
 async def verify_admin_or_operator(
     user: Optional[User] = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_db_session),
 ) -> User:
     """
     Verify the user is authenticated and has OPERATOR or ADMIN role.
@@ -154,18 +154,10 @@ async def verify_admin_or_operator(
     This replaces the legacy verify_admin_flexible for game/card endpoints.
     When no users exist yet (fresh install), allows open access for bootstrap.
     """
-    from database import get_db_session
-    from sqlalchemy import func, select
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    # Check if any users exist (bootstrap mode)
-    db: AsyncSession = await anext(get_db_session())
-    result = await db.execute(select(func.count(User.id)))
+    result = await db_session.execute(select(func.count(User.id)))
     total_users = result.scalar_one()
 
     if total_users == 0:
-        # No users yet: allow open access for initial setup
-        # This maintains backward compatibility with standalone/dev mode
         raise HTTPException(
             status_code=401,
             detail="Authentication required. Please register an account.",
