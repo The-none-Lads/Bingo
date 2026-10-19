@@ -4,10 +4,11 @@ import re
 import secrets
 from typing import List, Optional
 
-from auth.dependencies import verify_admin_flexible
+from auth.dependencies import get_current_user, verify_admin_flexible
 from auth.headers import SecurityHeadersMiddleware
 from auth.rbac import assert_resource_access, has_role, require_admin, require_operator_with_bootstrap
-from database import close_db, init_db
+from auth.session import SESSION_COOKIE_NAME, get_session_user
+from database import close_db, get_db_session, get_sessionmaker, init_db
 from dotenv import load_dotenv
 from db_models import User
 from fastapi import (
@@ -16,10 +17,13 @@ from fastapi import (
     Header,
     HTTPException,
     Path,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from logic.cards import generate_75_ball_card, serialize_card, short_id
 from logic.draws import DrawEngine
 from logic.validate import validate_card
@@ -200,6 +204,53 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
             await websocket.close(code=1008, reason="Origin not allowed")
             return
 
+    game = db.games.get(game_id)
+    policy = game.get("access_policy", "LINK_ONLY") if game else "LINK_ONLY"
+
+    if policy != "PUBLIC":
+        authenticated = False
+        session_factory = get_sessionmaker()
+        async with session_factory() as db_session:
+            # 1. Check session cookie
+            session_cookie = websocket.cookies.get(SESSION_COOKIE_NAME)
+            if session_cookie:
+                user = await get_session_user(db_session, session_cookie)
+                if user:
+                    authenticated = True
+
+            # 2. Check admin key (header or query param)
+            admin_key = os.getenv("ADMIN_API_KEY") or os.getenv("ADMIN_SECRET")
+            x_admin_key = websocket.headers.get("x-admin-key") or websocket.query_params.get("admin_key")
+            token = websocket.query_params.get("token")
+
+            if not authenticated and admin_key:
+                if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
+                    authenticated = True
+                elif token and secrets.compare_digest(token, admin_key):
+                    authenticated = True
+
+            # 3. Check token query param (session token or player token)
+            if not authenticated and token:
+                user = await get_session_user(db_session, token)
+                if user:
+                    authenticated = True
+                else:
+                    from auth.player_access import validate_player_session
+                    player_sess = await validate_player_session(db_session, token, game_id)
+                    if player_sess:
+                        authenticated = True
+
+            # 4. Check bootstrap mode (0 users in DB and no admin key configured)
+            if not authenticated:
+                result = await db_session.execute(select(func.count(User.id)))
+                total_users = result.scalar_one()
+                if total_users == 0 and not admin_key:
+                    authenticated = True
+
+        if not authenticated:
+            await websocket.close(code=1008, reason="Authentication required. This game is not public.")
+            return
+
     connected = await manager.connect(game_id, websocket)
     if not connected:
         await websocket.close(code=1008, reason="Connection limit reached")
@@ -224,6 +275,7 @@ async def broadcast_game_state(game_id: str):
         "mode": game["mode"],
         "stage": game["stage"],
         "status": game["status"],
+        "access_policy": game.get("access_policy", "LINK_ONLY"),
     }
     await manager.broadcast(game_id, {"type": "state_update", "state": state})
 
@@ -253,6 +305,7 @@ async def start_game(
             "stage": req.stage,
             "ball_set": req.ball_set,
             "status": "active",
+            "access_policy": getattr(req, "access_policy", "LINK_ONLY") or "LINK_ONLY",
             "owner_id": current_user.id if current_user else None,
         }
         db.set_game(game_id, game_data)
@@ -300,19 +353,62 @@ async def draw_number(
 
 
 @app.get("/games/{game_id}/state", response_model=GameStateResponse)
-def game_state(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$")
+async def game_state(
+    request: Request,
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
+    x_player_session: Optional[str] = Header(None, alias="X-Player-Session"),
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None),
+    db_session: AsyncSession = Depends(get_db_session),
 ):
     game = db.games.get(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    return {
+
+    policy = game.get("access_policy", "LINK_ONLY")
+    state_payload = {
         "game_id": game_id,
         "drawn": list(game["drawn"]),
         "mode": game["mode"],
         "stage": game["stage"],
         "status": game["status"],
+        "access_policy": policy,
     }
+
+    if policy == "PUBLIC":
+        return state_payload
+
+    # Authenticate for non-public game
+    # 1. Logged in user session
+    current_user = await get_current_user(request=request, db=db_session)
+    if current_user:
+        return state_payload
+
+    # 2. Admin key check
+    admin_key = os.getenv("ADMIN_API_KEY") or os.getenv("ADMIN_SECRET")
+    if admin_key:
+        if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
+            return state_payload
+        if authorization:
+            parts = authorization.split()
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                if secrets.compare_digest(parts[1], admin_key):
+                    return state_payload
+
+    # 3. Player session token header
+    if x_player_session:
+        from auth.player_access import validate_player_session
+        player_sess = await validate_player_session(db_session, x_player_session, game_id)
+        if player_sess:
+            return state_payload
+
+    # 4. Bootstrap mode (0 users and no admin key configured)
+    result = await db_session.execute(select(func.count(User.id)))
+    total_users = result.scalar_one()
+    if total_users == 0 and not admin_key:
+        return state_payload
+
+    raise HTTPException(status_code=401, detail="Authentication required. This game is not public.")
 
 
 # -------------------------

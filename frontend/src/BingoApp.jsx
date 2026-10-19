@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield, ExternalLink, Users } from 'lucide-react';
+import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield, ExternalLink, Users, Lock, Globe } from 'lucide-react';
 import { AuthModal } from './AuthModal';
 import { AdminDashboard } from './AdminDashboard';
 import { PlayerView } from './PlayerView';
@@ -73,9 +73,10 @@ const BingoApp = () => {
   const [playerLinks, setPlayerLinks] = useState([]);
   const [playerViewToken, setPlayerViewToken] = useState(null);
 
-  // Authentication State
+  // Authentication & Access Control State
   const [currentUser, setCurrentUser] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isPrivateGame, setIsPrivateGame] = useState(false);
 
   // Admin credential (never sent by the public display view; only used for
   // the privileged start/draw/stage/cards-batch/cards-list requests). This
@@ -175,6 +176,7 @@ const BingoApp = () => {
       if (res.ok) {
         setCurrentUser(null);
         setIsAuthModalOpen(false);
+        setTimeout(fetchGameState, 50);
       }
     } catch (err) {
       console.error('Logout error:', err);
@@ -280,23 +282,38 @@ const BingoApp = () => {
   const fetchGameState = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/games/${gameId}/state`, {
+        headers: adminHeaders(),
         credentials: 'include'
       });
+      if (response.status === 401 || response.status === 403) {
+        setIsPrivateGame(true);
+        setGameState(null);
+        return;
+      }
       if (response.ok) {
+        setIsPrivateGame(false);
         const data = await response.json();
         const now = Date.now();
         if (!wsConnected || now - lastUpdateRef.current > 1000) {
           updateGameState(data, 'poll');
         }
+      } else if (response.status === 404) {
+        setIsPrivateGame(false);
       }
     } catch (err) {
       console.error('Failed to fetch game state:', err);
     }
-  }, [gameId, wsConnected, updateGameState, API_BASE]);
+  }, [gameId, wsConnected, updateGameState, API_BASE, adminHeaders]);
+
+  // Refresh game state whenever current user changes (e.g. login/logout)
+  useEffect(() => {
+    fetchGameState();
+  }, [currentUser, fetchGameState]);
 
   const fetchPlayerLinks = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/games/${gameId}/links`, {
+        headers: adminHeaders(),
         credentials: 'include'
       });
       if (res.ok) {
@@ -306,7 +323,7 @@ const BingoApp = () => {
     } catch (err) {
       console.error('Failed to fetch links:', err);
     }
-  }, [gameId, API_BASE]);
+  }, [gameId, API_BASE, adminHeaders]);
 
   // Handle Game ID change
   useEffect(() => {
@@ -320,7 +337,7 @@ const BingoApp = () => {
     fetchGameState();
     // Load existing player links for this game
     fetchPlayerLinks();
-  }, [gameId, fetchCardsForGame, fetchGameState]);
+  }, [gameId, fetchCardsForGame, fetchGameState, fetchPlayerLinks]);
 
   // Confetti Animation with safe cleanup
   const launchConfetti = useCallback(() => {
@@ -384,7 +401,7 @@ const BingoApp = () => {
 
   // WebSocket connection lifecycle
   useEffect(() => {
-    const wsUrl = `${WS_BASE}/${gameId}`;
+    const wsUrl = adminKey ? `${WS_BASE}/${gameId}?token=${encodeURIComponent(adminKey)}` : `${WS_BASE}/${gameId}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -423,7 +440,7 @@ const BingoApp = () => {
         wsRef.current.close();
       }
     };
-  }, [gameId, WS_BASE, updateGameState, launchConfetti]);
+  }, [gameId, WS_BASE, adminKey, updateGameState, launchConfetti]);
 
   // Polling as fallback when WebSocket is inactive
   useEffect(() => {
@@ -432,9 +449,9 @@ const BingoApp = () => {
     pollIntervalRef.current = setInterval(async () => {
       await fetchGameState();
 
-      // Check if WebSocket is closed and attempt reconnect
-      if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
-        const wsUrl = `${config.wsBaseUrl}/${gameId}`;
+      // Check if WebSocket is closed and attempt reconnect (skip if known private and unauthenticated)
+      if ((!isPrivateGame || currentUser || adminKey) && (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED)) {
+        const wsUrl = adminKey ? `${config.wsBaseUrl}/${gameId}?token=${encodeURIComponent(adminKey)}` : `${config.wsBaseUrl}/${gameId}`;
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
@@ -465,7 +482,7 @@ const BingoApp = () => {
         pollIntervalRef.current = null;
       }
     };
-  }, [gameId, wsConnected, fetchGameState, updateGameState, POLL_INTERVAL, launchConfetti]);
+  }, [gameId, wsConnected, isPrivateGame, currentUser, adminKey, fetchGameState, updateGameState, POLL_INTERVAL, launchConfetti]);
 
   // Periodic card fetch
   useEffect(() => {
@@ -480,13 +497,40 @@ const BingoApp = () => {
     };
   }, [fetchCardsForGame, CARD_FETCH_INTERVAL]);
 
+  const handleAuthSuccess = (user) => {
+    setCurrentUser(user);
+    setIsAuthModalOpen(false);
+    setTimeout(fetchGameState, 50);
+  };
+
+  const updateAccessPolicy = async (newPolicy) => {
+    try {
+      const res = await fetch(`${API_BASE}/games/${gameId}/access-policy`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        credentials: 'include',
+        body: JSON.stringify({ policy: newPolicy })
+      });
+      if (res.ok) {
+        setGameState(prev => prev ? { ...prev, access_policy: newPolicy } : prev);
+        setIsPrivateGame(newPolicy !== 'PUBLIC');
+      } else {
+        const err = await res.json();
+        console.error('Failed to update access policy:', err);
+      }
+    } catch (err) {
+      console.error('Failed to update access policy:', err);
+    }
+  };
+
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
+      const currentPolicy = gameState?.access_policy || 'LINK_ONLY';
       await fetch(`${API_BASE}/games/${gameId}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...adminHeaders() },
         credentials: 'include',
-        body: JSON.stringify({ mode, ball_set: 75, stage })
+        body: JSON.stringify({ mode, ball_set: 75, stage, access_policy: currentPolicy })
       });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
@@ -698,7 +742,38 @@ const BingoApp = () => {
           </div>
 
           {/* Main Display Area */}
-          {gameState && (
+          {!currentUser && (isPrivateGame || (gameState && gameState.access_policy !== 'PUBLIC')) ? (
+            <div className="flex flex-col items-center justify-center py-16">
+              <div className="bg-gradient-to-br from-gray-900 via-black to-gray-950 border-2 border-yellow-500/60 rounded-3xl p-10 max-w-lg w-full text-center backdrop-blur-md shadow-[0_0_50px_rgba(255,215,0,0.15)] relative overflow-hidden">
+                <div className="absolute inset-0 bg-yellow-500/5 pointer-events-none"></div>
+                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-yellow-500/10 border-2 border-yellow-500 flex items-center justify-center text-yellow-400 shadow-[0_0_20px_rgba(255,215,0,0.3)]">
+                  <Lock className="w-10 h-10" />
+                </div>
+                <h2 className="text-3xl font-extrabold text-yellow-300 mb-3 tracking-wide" style={{ textShadow: '0 0 15px rgba(255,215,0,0.4)' }}>
+                  Private Game
+                </h2>
+                <p className="text-gray-300 mb-8 leading-relaxed text-sm">
+                  Game <span className="font-mono text-yellow-400 font-bold px-1.5 py-0.5 bg-yellow-400/10 rounded border border-yellow-400/20">{gameId}</span> is private. Sign in with an authorized account or join with an authorized player link to view live bingo.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                  <button
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className="flex-1 px-5 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-extrabold rounded-xl shadow-lg hover:from-yellow-300 hover:to-yellow-500 transition-all flex items-center justify-center gap-2"
+                  >
+                    <User className="w-5 h-5" />
+                    Sign In
+                  </button>
+                  <button
+                    onClick={() => setView('player')}
+                    className="flex-1 px-5 py-3 bg-black/60 border border-yellow-500/70 text-yellow-300 font-bold rounded-xl hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Users className="w-5 h-5" />
+                    Join as Player
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : gameState ? (
             <>
               <div className="mb-12 flex flex-col items-center">
                 <div className="relative w-full max-w-4xl">
@@ -798,6 +873,11 @@ const BingoApp = () => {
                 </div>
               </div>
             </>
+          ) : (
+            <div className="text-center py-20 text-gray-400">
+              <div className="text-2xl font-bold text-yellow-500/80 mb-2">No Active Game</div>
+              <p>Game "{gameId}" has not been started yet. Use Host Controls to start a game.</p>
+            </div>
           )}
 
           {/* Celebration Overlay */}
@@ -826,7 +906,7 @@ const BingoApp = () => {
             isOpen={isAuthModalOpen}
             onClose={() => setIsAuthModalOpen(false)}
             currentUser={currentUser}
-            onAuthSuccess={(user) => setCurrentUser(user)}
+            onAuthSuccess={handleAuthSuccess}
             onLogout={handleLogout}
             apiBaseUrl={API_BASE}
           />
@@ -972,6 +1052,55 @@ const BingoApp = () => {
                     AUDITOR
                   </span>
                 )}
+              </div>
+            </div>
+
+            {/* Game Access Policy Toggle */}
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {gameState?.access_policy === 'PUBLIC' ? (
+                    <Globe className="w-5 h-5 text-green-600 flex-shrink-0" />
+                  ) : (
+                    <Lock className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                  )}
+                  <div>
+                    <div className="text-sm font-bold text-gray-800">
+                      Access Policy: <span className={gameState?.access_policy === 'PUBLIC' ? 'text-green-600 font-extrabold' : 'text-amber-600 font-extrabold'}>{gameState?.access_policy || 'LINK_ONLY'}</span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {gameState?.access_policy === 'PUBLIC'
+                        ? 'Public: Any guest can view live bingo without signing in.'
+                        : 'Private (Link Only): Only signed-in users or authorized player links can view.'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-2.5">
+                <button
+                  type="button"
+                  onClick={() => updateAccessPolicy('PUBLIC')}
+                  className={`flex-1 py-1.5 px-3 rounded text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    gameState?.access_policy === 'PUBLIC'
+                      ? 'bg-green-600 text-white shadow-sm'
+                      : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  Set Public
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateAccessPolicy('LINK_ONLY')}
+                  className={`flex-1 py-1.5 px-3 rounded text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    gameState?.access_policy !== 'PUBLIC'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  Set Private (Link Only)
+                </button>
               </div>
             </div>
 
@@ -1406,7 +1535,7 @@ const BingoApp = () => {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         currentUser={currentUser}
-        onAuthSuccess={(user) => setCurrentUser(user)}
+        onAuthSuccess={handleAuthSuccess}
         onLogout={handleLogout}
         apiBaseUrl={API_BASE}
       />

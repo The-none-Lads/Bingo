@@ -207,6 +207,8 @@ async def update_access_policy(
         assert_resource_access(current_user, game.get("owner_id"))
 
     game["access_policy"] = req.policy
+    from app import broadcast_game_state
+    await broadcast_game_state(game_id)
     return MessageResponse(message=f"Access policy updated to {req.policy}")
 
 

@@ -23,6 +23,11 @@ class CreateGameRequest(BaseModel):
     )
     ball_set: int = Field(..., ge=1, le=100, description="Ball set size (1-100)")
     stage: int = Field(..., ge=1, le=5, description="Progressive stage (1-5)")
+    access_policy: Optional[str] = Field(
+        default="LINK_ONLY",
+        pattern=r"^(PUBLIC|LINK_ONLY)$",
+        description="Game access policy: PUBLIC or LINK_ONLY",
+    )
 
 
 class GameStateResponse(BaseModel):
@@ -31,6 +36,7 @@ class GameStateResponse(BaseModel):
     mode: str
     stage: int
     status: str
+    access_policy: Optional[str] = "LINK_ONLY"
 
 
 # --- Card-related schemas ---
