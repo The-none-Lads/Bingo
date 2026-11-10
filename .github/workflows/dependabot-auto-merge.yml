@@ -1,0 +1,98 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: Auto-merge safe Dependabot updates
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      # This action reads PR metadata through the GitHub API. Do not check out
+      # or execute code from the Dependabot branch in this privileged workflow.
+      - name: Fetch Dependabot update metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only patch and minor updates are eligible. Major updates stay manual.
+      - name: Wait for CI and merge
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const headSha = process.env.HEAD_SHA;
+            const expectedWorkflows = ["CI", "Tests"];
+            const deadline = Date.now() + 20 * 60 * 1000;
+
+            core.info(`Waiting for ${expectedWorkflows.join(" and ")} on ${headSha}`);
+
+            while (Date.now() < deadline) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: headSha,
+                event: "pull_request",
+                per_page: 100
+              });
+
+              const latestRuns = new Map();
+              for (const run of data.workflow_runs) {
+                if (!expectedWorkflows.includes(run.name)) continue;
+                const current = latestRuns.get(run.name);
+                if (!current || new Date(run.created_at) > new Date(current.created_at)) {
+                  latestRuns.set(run.name, run);
+                }
+              }
+
+              if (expectedWorkflows.every(name => latestRuns.has(name))) {
+                const runs = expectedWorkflows.map(name => latestRuns.get(name));
+                if (runs.every(run => run.status === "completed")) {
+                  const failed = runs.filter(run => run.conclusion !== "success");
+                  if (failed.length > 0) {
+                    core.setFailed(
+                      `Not merging: required workflow(s) did not succeed: ${failed
+                        .map(run => `${run.name} (${run.conclusion})`)
+                        .join(", ")}`
+                    );
+                    return;
+                  }
+
+                  // The SHA guard prevents merging if Dependabot updated the
+                  // branch while this job was waiting for CI.
+                  await github.rest.pulls.merge({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: prNumber,
+                    merge_method: "squash",
+                    sha: headSha
+                  });
+
+                  core.info(`Successfully squash-merged Dependabot PR #${prNumber} after CI passed.`);
+                  return;
+                }
+              }
+
+              await new Promise(resolve => setTimeout(resolve, 15000));
+            }
+
+            core.setFailed(
+              "Not merging: timed out waiting for both CI and Tests to complete successfully."
+            );
