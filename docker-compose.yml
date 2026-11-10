@@ -9,14 +9,14 @@ services:
     volumes:
       - card-data:/app/data
     ports:
-      - "8000:8000"
+      - "19002:8000"
     restart: unless-stopped
 
   frontend:
     image: ghcr.io/the-none-lads/bingo-frontend:latest
     environment:
-      - API_BASE_URL=http://localhost:8000
-      - WS_BASE_URL=ws://localhost:8000/ws
+      - API_BASE_URL=https://bingo.gameserver1.cc/api
+      - WS_BASE_URL=ws://bingo.gameserver1.cc/api/ws
       - POLL_INTERVAL=20000
       - CARD_FETCH_INTERVAL=300000
       - GAME_ID_DEFAULT=demo
@@ -24,7 +24,7 @@ services:
       - CONFETTI_DURATION=5000
 
     ports:
-      - "80:80"
+      - "19001:80"
     restart: unless-stopped
 
 volumes:
