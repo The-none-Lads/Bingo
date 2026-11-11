@@ -17,7 +17,8 @@ def clean_db():
 @pytest.fixture
 def client():
     """Create test client."""
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 class TestGameEndpoints:
@@ -357,6 +358,13 @@ class TestErrorHandling:
         response = client.post("/games/test/start", json={"invalid": "data"})
         # Should fail validation
         assert response.status_code == 422
+
+
+class TestHealthEndpoint:
+    def test_health_checks_database_connectivity(self, client):
+        response = client.get("/health")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
 
 
 class TestDrawEndpoints:

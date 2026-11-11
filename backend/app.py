@@ -1,8 +1,18 @@
+import asyncio
+import logging
 import os
 import re
 import secrets
+from contextlib import asynccontextmanager
 from typing import List, Optional
 
+from auth.config import allow_open_bootstrap, get_admin_api_key, is_production
+from auth.dependencies import get_current_user, verify_admin_flexible
+from auth.headers import SecurityHeadersMiddleware
+from auth.rbac import assert_resource_access, has_role, require_admin, require_operator_with_bootstrap
+from auth.session import SESSION_COOKIE_NAME, get_session_user
+from database import close_db, get_db_session, get_sessionmaker, init_db
+from db_models import User
 from dotenv import load_dotenv
 from fastapi import (
     Depends,
@@ -10,6 +20,7 @@ from fastapi import (
     Header,
     HTTPException,
     Path,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -25,9 +36,13 @@ from models import (
     ValidateRequest,
     ValidateResponse,
 )
+from routes.auth import router as auth_router
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from storage.db import PersistentStorageFullError, PersistentStorageUnavailableError, db
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 def get_bool_env(key: str, default: bool = True) -> bool:
@@ -43,19 +58,40 @@ def is_docs_enabled() -> bool:
     return get_bool_env("ENABLE_DOCS", True)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan managing database initialization and cleanup."""
+    await init_db()
+    try:
+        yield
+    finally:
+        await close_db()
+
+
 app = FastAPI(
     title="Bingo Game API",
     docs_url="/docs" if is_docs_enabled() else None,
     redoc_url="/redoc" if is_docs_enabled() else None,
     openapi_url="/openapi.json" if is_docs_enabled() else None,
+    lifespan=lifespan,
 )
+
+
+@app.get("/health", tags=["Health"])
+async def health_check(
+    db_session: AsyncSession = Depends(get_db_session),
+) -> dict[str, str]:
+    await db_session.execute(select(1))
+    return {"status": "ok"}
 
 
 # Configuration from environment variables
 def get_cors_origins() -> List[str]:
-    """Get CORS origins from environment variable or safe defaults."""
+    """Use localhost defaults only outside production."""
     origins_str = os.getenv("CORS_ORIGINS")
     if origins_str is None or not origins_str.strip():
+        if is_production():
+            raise RuntimeError("CORS_ORIGINS must be explicitly configured in production")
         return [
             "http://localhost:5173",
             "http://localhost:3000",
@@ -67,10 +103,15 @@ def get_cors_origins() -> List[str]:
             "http://127.0.0.1:8000",
         ]
 
-    if origins_str.strip() == "*":
+    origins = [origin.strip() for origin in origins_str.split(",") if origin.strip()]
+    if not origins:
+        raise RuntimeError("CORS_ORIGINS must contain at least one origin")
+    if "*" in origins:
+        if is_production():
+            raise RuntimeError("Wildcard CORS origins are not allowed in production")
         return ["*"]
 
-    return [origin.strip() for origin in origins_str.split(",") if origin.strip()]
+    return origins
 
 
 cors_origins = get_cors_origins()
@@ -79,14 +120,27 @@ allow_credentials = get_bool_env("CORS_ALLOW_CREDENTIALS", True)
 if "*" in cors_origins:
     allow_credentials = False
 
-# CORS Configuration
+# Security & CORS Middleware
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=allow_credentials,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
 )
+
+# Mount routers
+app.include_router(auth_router)
+from routes.admin import router as admin_router
+
+app.include_router(admin_router)
+from routes.player_access import router as player_router
+
+app.include_router(player_router)
+from routes.oidc import router as oidc_router
+
+app.include_router(oidc_router)
 
 
 # -------------------------
@@ -95,31 +149,13 @@ app.add_middleware(
 
 
 async def verify_admin(
-    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
-    authorization: Optional[str] = Header(None),
+    is_admin: bool = Depends(verify_admin_flexible),
 ) -> bool:
     """
-    Lightweight admin authorization verification.
-    If ADMIN_API_KEY or ADMIN_SECRET is configured, validates credentials.
-    If neither is configured, allows open access for development/private instances.
+    Admin verification dependency: accepts ADMIN_API_KEY/ADMIN_SECRET or session ADMIN role.
     """
-    admin_key = os.getenv("ADMIN_API_KEY") or os.getenv("ADMIN_SECRET")
-    if not admin_key:
-        return True
+    return is_admin
 
-    if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
-        return True
-
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            if secrets.compare_digest(parts[1], admin_key):
-                return True
-
-    raise HTTPException(
-        status_code=401,
-        detail="Unauthorized: Admin authentication required",
-    )
 
 
 # -------------------------
@@ -134,20 +170,22 @@ class ConnectionManager:
         self.active: dict[str, list[WebSocket]] = {}
         self.max_connections_per_game = max_connections_per_game
         self.max_total_connections = max_total_connections
+        self._connection_lock = asyncio.Lock()
 
     @property
     def total_connections(self) -> int:
         return sum(len(conns) for conns in self.active.values())
 
     async def connect(self, game_id: str, websocket: WebSocket) -> bool:
-        if self.total_connections >= self.max_total_connections:
-            return False
-        game_conns = self.active.setdefault(game_id, [])
-        if len(game_conns) >= self.max_connections_per_game:
-            return False
-        await websocket.accept()
-        game_conns.append(websocket)
-        return True
+        async with self._connection_lock:
+            if self.total_connections >= self.max_total_connections:
+                return False
+            game_conns = self.active.setdefault(game_id, [])
+            if len(game_conns) >= self.max_connections_per_game:
+                return False
+            await websocket.accept()
+            game_conns.append(websocket)
+            return True
 
     def disconnect(self, game_id: str, websocket: WebSocket):
         if game_id in self.active:
@@ -162,7 +200,10 @@ class ConnectionManager:
         for ws in list(self.active[game_id]):
             try:
                 await ws.send_json(message)
-            except Exception:
+            except WebSocketDisconnect:
+                self.disconnect(game_id, ws)
+            except (OSError, RuntimeError) as exc:
+                logger.warning("WebSocket send failed for game %s: %s", game_id, exc)
                 self.disconnect(game_id, ws)
 
 
@@ -175,6 +216,59 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
         await websocket.close(code=1008, reason="Invalid game ID format")
         return
 
+    # Validate Origin header against CORS allowlist to prevent cross-origin
+    # WebSocket hijacking. A malicious site could otherwise silently connect
+    # and stream game state (drawn numbers, celebrations) for any game.
+    origin = websocket.headers.get("origin")
+    if origin and "*" not in cors_origins:
+        if origin not in cors_origins:
+            await websocket.close(code=1008, reason="Origin not allowed")
+            return
+
+    game = db.games.get(game_id)
+    policy = game.get("access_policy", "LINK_ONLY") if game else "LINK_ONLY"
+
+    if policy != "PUBLIC":
+        authenticated = False
+        session_factory = get_sessionmaker()
+        async with session_factory() as db_session:
+            # 1. Check session cookie
+            session_cookie = websocket.cookies.get(SESSION_COOKIE_NAME)
+            if session_cookie:
+                user = await get_session_user(db_session, session_cookie)
+                if user:
+                    authenticated = True
+
+            # 2. Check admin key from a header only; secrets must not be sent in URLs.
+            admin_key = get_admin_api_key()
+            x_admin_key = websocket.headers.get("x-admin-key")
+            token = websocket.query_params.get("token")
+
+            if not authenticated and admin_key:
+                if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
+                    authenticated = True
+            # 3. Check token query param (session token or player token)
+            if not authenticated and token:
+                user = await get_session_user(db_session, token)
+                if user:
+                    authenticated = True
+                else:
+                    from auth.player_access import validate_player_session
+                    player_sess = await validate_player_session(db_session, token, game_id)
+                    if player_sess:
+                        authenticated = True
+
+            # 4. Allow unauthenticated bootstrap only for development installations.
+            if not authenticated:
+                result = await db_session.execute(select(func.count(User.id)))
+                total_users = result.scalar_one()
+                if total_users == 0 and allow_open_bootstrap():
+                    authenticated = True
+
+        if not authenticated:
+            await websocket.close(code=1008, reason="Authentication required. This game is not public.")
+            return
+
     connected = await manager.connect(game_id, websocket)
     if not connected:
         await websocket.close(code=1008, reason="Connection limit reached")
@@ -183,7 +277,7 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
     try:
         while True:
             await websocket.receive_text()
-    except (WebSocketDisconnect, Exception):
+    except WebSocketDisconnect:
         pass
     finally:
         manager.disconnect(game_id, websocket)
@@ -199,6 +293,7 @@ async def broadcast_game_state(game_id: str):
         "mode": game["mode"],
         "stage": game["stage"],
         "status": game["status"],
+        "access_policy": game.get("access_policy", "LINK_ONLY"),
     }
     await manager.broadcast(game_id, {"type": "state_update", "state": state})
 
@@ -212,21 +307,30 @@ async def broadcast_game_state(game_id: str):
 async def start_game(
     req: CreateGameRequest,
     game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
-    _admin: bool = Depends(verify_admin),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
+    # Enforce per-user active games quota
+    if current_user:
+        from auth.quotas import check_active_games_quota
+        await check_active_games_quota(current_user, exclude_game_id=game_id)
+
     async with db.get_lock(game_id):
+        existing_game = db.games.get(game_id)
+        if current_user and existing_game:
+            assert_resource_access(current_user, existing_game.get("owner_id"))
+
         engine = DrawEngine(max_number=req.ball_set)
-        db.set_game(
-            game_id,
-            {
-                "engine": engine,
-                "drawn": engine.drawn,
-                "mode": req.mode,
-                "stage": req.stage,
-                "ball_set": req.ball_set,
-                "status": "active",
-            },
-        )
+        game_data = {
+            "engine": engine,
+            "drawn": engine.drawn,
+            "mode": req.mode,
+            "stage": req.stage,
+            "ball_set": req.ball_set,
+            "status": "active",
+            "access_policy": getattr(req, "access_policy", "LINK_ONLY") or "LINK_ONLY",
+            "owner_id": current_user.id if current_user else None,
+        }
+        db.set_game(game_id, game_data)
         await broadcast_game_state(game_id)
         return {"message": f"Game {game_id} started", "config": req.model_dump()}
 
@@ -235,12 +339,14 @@ async def start_game(
 async def set_stage(
     game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
     required_rows: int = Path(..., ge=1, le=5),
-    _admin: bool = Depends(verify_admin),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
     async with db.get_lock(game_id):
         game = db.games.get(game_id)
         if not game:
             raise HTTPException(status_code=404, detail="Game not found")
+        if current_user:
+            assert_resource_access(current_user, game.get("owner_id"))
         game["stage"] = required_rows
         await broadcast_game_state(game_id)
         return {"game_id": game_id, "stage": required_rows}
@@ -249,12 +355,14 @@ async def set_stage(
 @app.post("/games/{game_id}/draw")
 async def draw_number(
     game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
-    _admin: bool = Depends(verify_admin),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
     async with db.get_lock(game_id):
         game = db.games.get(game_id)
         if not game:
             raise HTTPException(status_code=404, detail="Game not found")
+        if current_user:
+            assert_resource_access(current_user, game.get("owner_id"))
         num = game["engine"].draw()
         if num is None:
             game["status"] = "finished"
@@ -267,19 +375,62 @@ async def draw_number(
 
 
 @app.get("/games/{game_id}/state", response_model=GameStateResponse)
-def game_state(
-    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$")
+async def game_state(
+    request: Request,
+    game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
+    x_player_session: Optional[str] = Header(None, alias="X-Player-Session"),
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None),
+    db_session: AsyncSession = Depends(get_db_session),
 ):
     game = db.games.get(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    return {
+
+    policy = game.get("access_policy", "LINK_ONLY")
+    state_payload = {
         "game_id": game_id,
         "drawn": list(game["drawn"]),
         "mode": game["mode"],
         "stage": game["stage"],
         "status": game["status"],
+        "access_policy": policy,
     }
+
+    if policy == "PUBLIC":
+        return state_payload
+
+    # Authenticate for non-public game
+    # 1. Logged in user session
+    current_user = await get_current_user(request=request, db=db_session)
+    if current_user:
+        return state_payload
+
+    # 2. Admin key check
+    admin_key = get_admin_api_key()
+    if admin_key:
+        if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
+            return state_payload
+        if authorization:
+            parts = authorization.split()
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                if secrets.compare_digest(parts[1], admin_key):
+                    return state_payload
+
+    # 3. Player session token header
+    if x_player_session:
+        from auth.player_access import validate_player_session
+        player_sess = await validate_player_session(db_session, x_player_session, game_id)
+        if player_sess:
+            return state_payload
+
+    # 4. Bootstrap mode (0 users and no admin key configured)
+    result = await db_session.execute(select(func.count(User.id)))
+    total_users = result.scalar_one()
+    if total_users == 0 and allow_open_bootstrap():
+        return state_payload
+
+    raise HTTPException(status_code=401, detail="Authentication required. This game is not public.")
 
 
 # -------------------------
@@ -299,8 +450,13 @@ MAX_ID_COLLISION_RETRIES = 5
 @app.post("/cards/batch")
 async def generate_cards(
     req: CardBatchRequest,
-    _admin: bool = Depends(verify_admin),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
+    # Enforce per-user persistent cards quota if persistence was requested
+    if req.persistent and current_user:
+        from auth.quotas import check_persistent_cards_quota
+        await check_persistent_cards_quota(current_user, additional_cards=req.count)
+
     cards = []
     for _ in range(req.count):
         grid = generate_75_ball_card()
@@ -322,15 +478,15 @@ async def generate_cards(
         try:
             db.set_card(
                 public_id,
-                {"grid": grid, "serial": serial, "game_id": req.game_id},
+                {
+                    "grid": grid,
+                    "serial": serial,
+                    "game_id": req.game_id,
+                    "owner_id": current_user.id if current_user else None,
+                },
                 persistent=req.persistent,
             )
         except PersistentStorageFullError as exc:
-            # Explicit persistence was requested but the persistent store
-            # is at capacity. Fail clearly rather than silently falling
-            # back to ephemeral storage for the remaining cards, since
-            # that would mean some of a batch is durable and some isn't
-            # with no way for the caller to tell which.
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PersistentStorageUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -375,12 +531,23 @@ def get_card(
 @app.get("/games/{game_id}/cards")
 def get_game_cards(
     game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
-    _admin: bool = Depends(verify_admin),
+    current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
-    """Get all cards for a specific game"""
+    """Get all cards for a specific game (admin: all, operator: own only)."""
+    game = db.games.get(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if current_user:
+        assert_resource_access(current_user, game.get("owner_id"))
+
     game_cards = []
     for public_id, card_data in db.cards.items():
         if card_data.get("game_id") == game_id:
+            # Operators can only see their own cards; ADMIN sees all
+            if current_user and not has_role(current_user, "ADMIN"):
+                card_owner = card_data.get("owner_id")
+                if card_owner is not None and card_owner != current_user.id:
+                    continue
             game_cards.append(
                 {
                     "public_id": public_id,

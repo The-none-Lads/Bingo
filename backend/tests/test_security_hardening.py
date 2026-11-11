@@ -1,7 +1,11 @@
 import asyncio
 
 import pytest
-from app import app, manager
+from app import ConnectionManager, app, manager
+from auth.config import allow_open_bootstrap
+from auth.dependencies import verify_admin_flexible
+from auth.rbac import require_operator_with_bootstrap
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from logic.cards import generate_75_ball_card, serialize_card, short_id
 from storage.db import MemoryDB, PersistentStorageFullError, db
@@ -16,7 +20,8 @@ def clean_db():
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 class TestInputValidationHardening:
@@ -88,29 +93,30 @@ class TestInputValidationHardening:
 class TestAdminAuthorizationHardening:
     """Verify that privileged operations enforce admin auth when configured."""
 
-    def test_admin_auth_required_when_secret_set(self, monkeypatch):
+    def test_admin_auth_required_when_secret_set(self, monkeypatch, client):
         secret = "super-secret-admin-key-12345"
         monkeypatch.setenv("ADMIN_API_KEY", secret)
-        test_client = TestClient(app)
 
-        # 1. Unauthenticated request to privileged endpoint is rejected (401)
-        res_start = test_client.post(
+        # With ADMIN_API_KEY set, bootstrap mode is disabled
+        # Unauthenticated request should be rejected (401)
+        res_start = client.post(
             "/games/secure_game/start",
             json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
         )
+        # When ADMIN_API_KEY is set, verify_admin_flexible rejects with 401
         assert res_start.status_code == 401
 
-        res_draw = test_client.post("/games/secure_game/draw")
+        res_draw = client.post("/games/secure_game/draw")
         assert res_draw.status_code == 401
 
-        res_batch = test_client.post(
+        res_batch = client.post(
             "/cards/batch",
             json={"count": 5, "game_id": "secure_game"},
         )
         assert res_batch.status_code == 401
 
         # 2. Request with invalid header key is rejected (401)
-        res_bad_key = test_client.post(
+        res_bad_key = client.post(
             "/games/secure_game/start",
             json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
             headers={"X-Admin-Key": "wrong-key"},
@@ -118,29 +124,97 @@ class TestAdminAuthorizationHardening:
         assert res_bad_key.status_code == 401
 
         # 3. Request with valid X-Admin-Key header succeeds (200)
-        res_ok_header = test_client.post(
+        res_ok_header = client.post(
             "/games/secure_game/start",
-            json={"mode": "progressive_rows", "ball_set": 75, "stage": 1},
+            json={
+                "mode": "progressive_rows",
+                "ball_set": 75,
+                "stage": 1,
+                "access_policy": "PUBLIC",
+            },
             headers={"X-Admin-Key": secret},
         )
         assert res_ok_header.status_code == 200
 
         # 4. Request with valid Bearer token succeeds (200)
-        res_ok_bearer = test_client.post(
+        res_ok_bearer = client.post(
             "/games/secure_game/draw",
             headers={"Authorization": f"Bearer {secret}"},
         )
         assert res_ok_bearer.status_code == 200
 
         # 5. Public read endpoints remain open without auth
-        res_state = test_client.get("/games/secure_game/state")
+        res_state = client.get("/games/secure_game/state")
         assert res_state.status_code == 200
 
-        res_validate = test_client.post(
+        res_validate = client.post(
             "/validate",
             json={"game_id": "secure_game", "serial": "NONEXIST"},
         )
         assert res_validate.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_production_bootstrap_fails_closed_without_credentials(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.delenv("ADMIN_API_KEY", raising=False)
+        monkeypatch.delenv("ADMIN_SECRET", raising=False)
+
+        assert allow_open_bootstrap() is False
+        with pytest.raises(HTTPException) as admin_error:
+            await verify_admin_flexible(x_admin_key=None, authorization=None, user=None)
+        assert admin_error.value.status_code == 401
+
+        class EmptyDatabase:
+            async def execute(self, _statement):
+                class Result:
+                    @staticmethod
+                    def scalar_one():
+                        return 0
+
+                return Result()
+
+        with pytest.raises(HTTPException) as operator_error:
+            await require_operator_with_bootstrap(
+                user=None,
+                db_session=EmptyDatabase(),
+                x_admin_key=None,
+                authorization=None,
+            )
+        assert operator_error.value.status_code == 401
+
+    def test_production_cors_requires_explicit_non_wildcard_origins(self, monkeypatch):
+        from app import get_cors_origins
+
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.delenv("CORS_ORIGINS", raising=False)
+        with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+            get_cors_origins()
+
+        monkeypatch.setenv("CORS_ORIGINS", "*")
+        with pytest.raises(RuntimeError, match="Wildcard"):
+            get_cors_origins()
+
+
+class TestWebSocketConnectionLimits:
+    @pytest.mark.asyncio
+    async def test_concurrent_connections_cannot_exceed_limits(self):
+        manager = ConnectionManager(
+            max_connections_per_game=1,
+            max_total_connections=1,
+        )
+
+        class FakeWebSocket:
+            async def accept(self):
+                await asyncio.sleep(0)
+
+        sockets = [FakeWebSocket(), FakeWebSocket()]
+        results = await asyncio.gather(
+            *(manager.connect("limited_game", socket) for socket in sockets)
+        )
+
+        assert results.count(True) == 1
+        assert results.count(False) == 1
+        assert manager.total_connections == 1
 
 
 class TestAuthoritativeDrawIntegrityAndConcurrency:
