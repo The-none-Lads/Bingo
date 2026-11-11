@@ -1003,8 +1003,8 @@ const BingoApp = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Game Controls */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+          <div className="bg-white rounded-xl shadow-lg p-6 text-gray-900">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2 text-gray-900">
             <Play className="w-6 h-6" />
             Game Controls
           </h2>
@@ -1184,7 +1184,7 @@ const BingoApp = () => {
 
               {/* Player Links */}
               <div className="border-t pt-4 mt-4">
-                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2 text-gray-900">
                   <ExternalLink className="w-5 h-5 text-purple-600" />
                   Player Links
                 </h3>
@@ -1248,9 +1248,9 @@ const BingoApp = () => {
           </div>
 
           {/* Card Generation */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
+          <div className="bg-white rounded-xl shadow-lg p-6 text-gray-900">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold flex items-center gap-2">
+              <h2 className="text-2xl font-bold flex items-center gap-2 text-gray-900">
                 <Printer className="w-6 h-6" />
                 Card Generation
               </h2>
@@ -1324,7 +1324,7 @@ const BingoApp = () => {
               {generatedCards.length > 0 && (
                 <div className="border rounded-lg p-4 max-h-96 overflow-y-auto">
                   <div className="flex justify-between items-center mb-3">
-                    <h3 className="font-semibold">
+                    <h3 className="font-semibold text-gray-900">
                       Generated Cards ({generatedCards.length})
                       <span className="ml-2 text-xs text-gray-500">
                         • {lastBatchWasPersistent ? 'Saved permanently' : 'Temporary — cleared on restart'}
@@ -1389,8 +1389,8 @@ const BingoApp = () => {
           </div>
 
           {/* Validation */}
-          <div className="bg-white rounded-xl shadow-lg p-6 lg:col-span-2">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+          <div className="bg-white rounded-xl shadow-lg p-6 lg:col-span-2 text-gray-900">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2 text-gray-900">
               <CheckCircle2 className="w-6 h-6" />
               Card Validation
             </h2>
@@ -1458,8 +1458,8 @@ const BingoApp = () => {
 
           {/* Game Status */}
           {gameState && (
-            <div className="bg-white rounded-xl shadow-lg p-6 lg:col-span-2">
-              <h2 className="text-2xl font-bold mb-4">Current Game Status</h2>
+            <div className="bg-white rounded-xl shadow-lg p-6 lg:col-span-2 text-gray-900">
+              <h2 className="text-2xl font-bold mb-4 text-gray-900">Current Game Status</h2>
               <div className="grid grid-cols-4 gap-4 mb-4">
                 <div className="text-center">
                   <div className="text-3xl font-bold text-purple-600">{gameState.drawn.length}</div>
