@@ -1,4 +1,4 @@
-FROM python:3.13-slim AS backend
+FROM python:3.15-slim AS backend
 WORKDIR /app
 
 # Copy requirements first (better for caching)
