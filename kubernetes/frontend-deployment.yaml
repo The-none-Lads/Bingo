@@ -21,8 +21,20 @@ spec:
         - image: ghcr.io/the-none-lads/bingo-frontend:latest
           name: frontend
           ports:
-            - containerPort: 80
+            - containerPort: 8080
               protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
           resources:
             limits:
               cpu: "100m"
@@ -33,10 +45,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: bingo-config
-          # nginx:alpine's master process still needs root to bind port 80
-          # and manage worker processes, so runAsNonRoot is not set here
-          # (unlike the backend); these restrictions are safe regardless.
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]

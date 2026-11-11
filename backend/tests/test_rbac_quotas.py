@@ -23,8 +23,15 @@ from storage.db import db
 async def reset_db_and_limiter():
     await auth_rate_limiter.reset()
     db.clear()
+    engine = get_engine()
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
+        await connection.run_sync(Base.metadata.create_all)
     yield
     db.clear()
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
+    await close_db()
 
 
 async def _register_user(client, username, email, password="SuperSecretPassword123!"):
@@ -180,11 +187,21 @@ class TestResourceOwnership:
             resp = await client.post("/cards/batch", json={"count": 3, "game_id": "game1"})
             assert resp.status_code == 200
 
-            # Op2 creates cards in game1 too
+            # Op2 cannot take over or write cards to op1's game
             await client.post("/auth/logout")
             await _login_user(client, "op2")
-            await client.post("/games/game1/start", json={"mode": "regular", "ball_set": 75, "stage": 1})
-            resp = await client.post("/cards/batch", json={"count": 2, "game_id": "game1"})
+            resp = await client.post(
+                "/games/game1/start",
+                json={"mode": "regular", "ball_set": 75, "stage": 1},
+            )
+            assert resp.status_code == 403
+
+            resp = await client.post(
+                "/games/game2/start",
+                json={"mode": "regular", "ball_set": 75, "stage": 1},
+            )
+            assert resp.status_code == 200
+            resp = await client.post("/cards/batch", json={"count": 2, "game_id": "game2"})
             assert resp.status_code == 200
 
             # Op1 sees only own cards
@@ -193,13 +210,17 @@ class TestResourceOwnership:
             resp = await client.get("/games/game1/cards")
             assert resp.status_code == 200
             assert resp.json()["count"] == 3
+            assert (await client.get("/games/game2/cards")).status_code == 403
 
-            # Admin sees all cards
+            # Admin can inspect each game's cards
             await client.post("/auth/logout")
             await _login_user(client, "admin1")
             resp = await client.get("/games/game1/cards")
             assert resp.status_code == 200
-            assert resp.json()["count"] == 5
+            assert resp.json()["count"] == 3
+            resp = await client.get("/games/game2/cards")
+            assert resp.status_code == 200
+            assert resp.json()["count"] == 2
 
 
 class TestUserQuotas:

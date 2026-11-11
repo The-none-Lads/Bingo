@@ -9,6 +9,7 @@ import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 import pytest_asyncio
 from app import app
@@ -30,6 +31,7 @@ async def reset_db_and_limiter():
     db.clear()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    await close_db()
 
 
 class TestOIDCConfig:
@@ -115,6 +117,27 @@ class TestOIDCLoginFlow:
                     assert "state=" in data["authorization_url"]
 
     @pytest.mark.asyncio
+    async def test_login_does_not_expose_provider_error(self):
+        with patch.dict(os.environ, {
+            "OIDC_ENABLED": "true",
+            "OIDC_ISSUER": "https://auth.example.com",
+            "OIDC_CLIENT_ID": "test-client",
+        }):
+            with patch(
+                "routes.oidc.discover_oidc_config",
+                new_callable=AsyncMock,
+                side_effect=httpx.ConnectError("private upstream detail"),
+            ), patch("routes.oidc.logger.exception") as log_exception:
+                transport = ASGITransport(app=app)
+                async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                    response = await ac.get("/auth/oidc/login")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to discover OIDC configuration"
+        assert "private upstream detail" not in response.text
+        log_exception.assert_called_once_with("OIDC discovery failed during login")
+
+    @pytest.mark.asyncio
     async def test_callback_rejects_invalid_state(self):
         with patch.dict(os.environ, {"OIDC_ENABLED": "true"}):
             transport = ASGITransport(app=app)
@@ -161,6 +184,7 @@ class TestOIDCTokenValidation:
     def test_valid_token_structure(self):
         import base64
         import json
+
         from routes.oidc import validate_id_token
 
         # Create a mock JWT (header.payload.signature)
@@ -185,9 +209,10 @@ class TestOIDCTokenValidation:
         assert claims["email"] == "user@example.com"
 
     def test_invalid_issuer_rejected(self):
-        from routes.oidc import validate_id_token
         import base64
         import json
+
+        from routes.oidc import validate_id_token
 
         header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode()).decode().rstrip("=")
         payload = base64.urlsafe_b64encode(json.dumps({
@@ -203,9 +228,10 @@ class TestOIDCTokenValidation:
         assert "Invalid token issuer" in str(exc_info.value)
 
     def test_invalid_audience_rejected(self):
-        from routes.oidc import validate_id_token
         import base64
         import json
+
+        from routes.oidc import validate_id_token
 
         header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode()).decode().rstrip("=")
         payload = base64.urlsafe_b64encode(json.dumps({
@@ -221,9 +247,10 @@ class TestOIDCTokenValidation:
         assert "Invalid token audience" in str(exc_info.value)
 
     def test_expired_token_rejected(self):
-        from routes.oidc import validate_id_token
         import base64
         import json
+
+        from routes.oidc import validate_id_token
 
         header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode()).decode().rstrip("=")
         payload = base64.urlsafe_b64encode(json.dumps({
@@ -244,8 +271,8 @@ class TestOIDCAccountLinking:
 
     @pytest.mark.asyncio
     async def test_find_or_create_new_oidc_user(self):
-        from routes.oidc import find_or_create_oidc_user
         from database import get_db_session
+        from routes.oidc import find_or_create_oidc_user
 
         db_session = await anext(get_db_session())
 
@@ -264,8 +291,8 @@ class TestOIDCAccountLinking:
 
     @pytest.mark.asyncio
     async def test_find_existing_oidc_user(self):
-        from routes.oidc import find_or_create_oidc_user
         from database import get_db_session
+        from routes.oidc import find_or_create_oidc_user
 
         db_session = await anext(get_db_session())
 

@@ -89,6 +89,11 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    if user.id == current_admin.id and (
+        req.role is not None or req.is_active is not None
+    ):
+        raise HTTPException(status_code=400, detail="Cannot modify your own account")
+
     # Prevent disabling the last active ADMIN
     if req.is_active is False and user.role == "ADMIN":
         admin_count = (

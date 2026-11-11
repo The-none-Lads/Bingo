@@ -12,6 +12,7 @@ Implements generic OIDC Authorization Code flow with:
 
 import hashlib
 import json
+import logging
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -19,13 +20,15 @@ from typing import Any, Dict, Optional, Tuple
 
 import httpx
 from auth.dependencies import require_authenticated_user
-from auth.session import create_session, set_session_cookie, clear_session_cookie
+from auth.session import clear_session_cookie, create_session, set_session_cookie
 from database import get_db_session
 from db_models import User, UserAuthMethod
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from models import UserResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -127,6 +130,7 @@ async def fetch_jwks(jwks_uri: str) -> Dict[str, Any]:
 def decode_jwt_segment(segment: str) -> Dict[str, Any]:
     """Decode a JWT segment (base64url decode + JSON parse)."""
     import base64
+
     # Add padding if needed
     padding = 4 - len(segment) % 4
     if padding != 4:
@@ -355,8 +359,11 @@ async def oidc_login(request: Request):
     # Discover IdP endpoints
     try:
         discovery = await discover_oidc_config(config["issuer"])
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to discover OIDC config: {exc}")
+    except (httpx.HTTPError, ValueError):
+        logger.exception("OIDC discovery failed during login")
+        raise HTTPException(
+            status_code=500, detail="Failed to discover OIDC configuration"
+        ) from None
 
     auth_url = discovery.get("authorization_endpoint")
     if not auth_url:
@@ -411,8 +418,11 @@ async def oidc_callback(
     # Discover IdP endpoints
     try:
         discovery = await discover_oidc_config(config["issuer"])
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"OIDC discovery failed: {exc}")
+    except (httpx.HTTPError, ValueError):
+        logger.exception("OIDC discovery failed during callback")
+        raise HTTPException(
+            status_code=500, detail="Failed to discover OIDC configuration"
+        ) from None
 
     token_url = discovery.get("token_endpoint")
     if not token_url:

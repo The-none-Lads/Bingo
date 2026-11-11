@@ -119,7 +119,7 @@ const BingoApp = () => {
       } else {
         setCurrentUser(null);
       }
-    } catch (err) {
+    } catch {
       setCurrentUser(null);
     }
   }, [API_BASE]);

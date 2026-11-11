@@ -1,11 +1,15 @@
 ---
 
-version: "3.9"
 services:
   backend:
     image: ghcr.io/the-none-lads/bingo-backend:latest
     environment:
-      - CARD_DB_PATH=/app/data/cards.db
+      CARD_DB_PATH: /app/data/cards.db
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      CORS_ORIGINS: ${CORS_ORIGINS-}
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-true}
+      ADMIN_API_KEY: ${ADMIN_API_KEY-}
+      INITIAL_ADMIN_TOKEN: ${INITIAL_ADMIN_TOKEN-}
     volumes:
       - card-data:/app/data
     ports:
@@ -15,16 +19,16 @@ services:
   frontend:
     image: ghcr.io/the-none-lads/bingo-frontend:latest
     environment:
-      - API_BASE_URL=http://localhost:8000
-      - WS_BASE_URL=ws://localhost:8000/ws
-      - POLL_INTERVAL=20000
-      - CARD_FETCH_INTERVAL=300000
-      - GAME_ID_DEFAULT=demo
-      - ENABLE_CELEBRATION=true
-      - CONFETTI_DURATION=5000
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+      WS_BASE_URL: ${WS_BASE_URL:-ws://localhost:8000/ws}
+      POLL_INTERVAL: ${POLL_INTERVAL:-20000}
+      CARD_FETCH_INTERVAL: ${CARD_FETCH_INTERVAL:-300000}
+      GAME_ID_DEFAULT: ${GAME_ID_DEFAULT:-demo}
+      ENABLE_CELEBRATION: ${ENABLE_CELEBRATION:-true}
+      CONFETTI_DURATION: ${CONFETTI_DURATION:-5000}
 
     ports:
-      - "80:80"
+      - "80:8080"
     restart: unless-stopped
 
 volumes:

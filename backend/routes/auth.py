@@ -1,6 +1,8 @@
 import os
+import secrets
 from typing import Optional
 
+from auth.config import is_production
 from auth.csrf import verify_csrf_token
 from auth.dependencies import get_current_user, require_admin, require_authenticated_user
 from auth.proxy import get_client_ip
@@ -39,8 +41,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 def is_registration_allowed() -> bool:
-    """Check if self-registration is enabled via environment variable (default: true)."""
-    val = os.getenv("ALLOW_REGISTRATION", "true").lower()
+    """Self-registration defaults off in production and on in development."""
+    default = "false" if is_production() else "true"
+    val = os.getenv("ALLOW_REGISTRATION", default).lower()
     return val in ("true", "1", "yes", "on")
 
 
@@ -65,11 +68,25 @@ async def register(
     req: RegisterRequest,
     response: Response,
     request: Request,
+    x_bootstrap_token: Optional[str] = Header(None, alias="X-Bootstrap-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
     # 1. Check total user count to determine if this is first-admin bootstrap
     user_count_result = await db.execute(select(func.count(User.id)))
     total_users = user_count_result.scalar_one()
+
+    if total_users == 0 and is_production():
+        bootstrap_token = os.getenv("INITIAL_ADMIN_TOKEN")
+        if (
+            not bootstrap_token
+            or len(bootstrap_token) < 32
+            or not x_bootstrap_token
+            or not secrets.compare_digest(x_bootstrap_token, bootstrap_token)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Initial administrator bootstrap is not configured or authorized.",
+            )
 
     # If not bootstrap and registration is disabled, reject
     if total_users > 0 and not is_registration_allowed():

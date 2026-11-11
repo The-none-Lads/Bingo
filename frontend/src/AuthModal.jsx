@@ -309,7 +309,7 @@ export const AuthModal = ({ isOpen, onClose, currentUser, onAuthSuccess, onLogou
                     } else {
                       setError('SSO is not enabled on this server');
                     }
-                  } catch (err) {
+                  } catch {
                     setError('Failed to initiate SSO login');
                   } finally {
                     setLoading(false);

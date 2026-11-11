@@ -1,7 +1,7 @@
-import os
 import secrets
 from typing import Optional
 
+from auth.config import allow_open_bootstrap, get_admin_api_key
 from auth.proxy import get_client_ip
 from auth.session import SESSION_COOKIE_NAME, get_session_user
 from database import get_db_session
@@ -27,7 +27,7 @@ async def get_current_user(
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             # Avoid matching ADMIN_API_KEY as a session token
-            admin_key = os.getenv("ADMIN_API_KEY") or os.getenv("ADMIN_SECRET")
+            admin_key = get_admin_api_key()
             if not admin_key or not secrets.compare_digest(parts[1], admin_key):
                 token = parts[1]
 
@@ -70,14 +70,14 @@ async def verify_admin_flexible(
     Unified admin verification:
     1. If user is logged in with role == "ADMIN", grant access.
     2. If ADMIN_API_KEY / ADMIN_SECRET is configured, check X-Admin-Key or Bearer token.
-    3. If neither ADMIN_API_KEY nor any users exist, allow open access for dev/standalone.
+    3. Allow open access only for development bootstrap installations.
     """
     # 1. Check logged-in user role
     if user and user.role == "ADMIN":
         return True
 
     # 2. Check legacy admin key
-    admin_key = os.getenv("ADMIN_API_KEY") or os.getenv("ADMIN_SECRET")
+    admin_key = get_admin_api_key()
     if admin_key:
         if x_admin_key and secrets.compare_digest(x_admin_key, admin_key):
             return True
@@ -92,5 +92,10 @@ async def verify_admin_flexible(
             detail="Unauthorized: Admin authentication required",
         )
 
-    # 3. If no admin key is configured in env, allow open access
-    return True
+    if allow_open_bootstrap():
+        return True
+
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized: Admin authentication required",
+    )

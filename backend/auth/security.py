@@ -74,7 +74,7 @@ def verify_dummy_password() -> None:
     """
     try:
         _hasher.verify(_DUMMY_HASH, "wrong_dummy_password_input")
-    except Exception:
+    except VerifyMismatchError:
         pass
 
 

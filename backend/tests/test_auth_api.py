@@ -1,4 +1,5 @@
 import os
+
 import pytest
 import pytest_asyncio
 from app import app
@@ -23,6 +24,29 @@ async def reset_db_and_limiter():
 
 @pytest.mark.asyncio
 class TestAuthAPI:
+    async def test_production_initial_admin_requires_bootstrap_token(self, monkeypatch):
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        monkeypatch.setenv("ALLOW_REGISTRATION", "false")
+        bootstrap_token = "test-bootstrap-token-with-at-least-32-characters"
+        monkeypatch.setenv("INITIAL_ADMIN_TOKEN", bootstrap_token)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            payload = {
+                "username": "secure_admin",
+                "email": "secure_admin@example.com",
+                "password": "SecureAdminPassword123!",
+            }
+            denied = await client.post("/auth/register", json=payload)
+            assert denied.status_code == 403
+
+            created = await client.post(
+                "/auth/register",
+                json=payload,
+                headers={"X-Bootstrap-Token": bootstrap_token},
+            )
+            assert created.status_code == 201
+            assert created.json()["role"] == "ADMIN"
+
     async def test_first_user_becomes_admin_and_receives_cookie(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             # First registration -> ADMIN

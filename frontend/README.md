@@ -15,16 +15,16 @@ A modern React-based frontend for the Bingo game application with real-time upda
 
 ## 🛠️ Tech Stack
 
-- **React 19.1.1** - Latest React with modern hooks
-- **Vite 7.1.7** - Lightning-fast build tool and dev server
-- **Tailwind CSS 4.1.16** - Utility-first CSS framework
-- **Lucide React 0.548.0** - Beautiful icon library
+- **React 19** - UI framework
+- **Vite 8** - Build tool and development server
+- **Tailwind CSS 4** - Utility-first CSS framework
+- **Lucide React** - Icon library
 - **Native WebSocket API** - Real-time communication
 - **Nginx** - Production web server
 
 ## 📋 Prerequisites
 
-- **Node.js 20+** and **npm**
+- **Node.js 25+** and **npm**
 - **Backend API** running (see main README)
 
 ## 🚀 Quick Start
@@ -36,8 +36,8 @@ A modern React-based frontend for the Bingo game application with real-time upda
 # Navigate to frontend directory
 cd frontend
 
-# Install dependencies
-npm install
+# Install exact locked dependencies
+npm ci
 
 # Start development server
 npm run dev
@@ -124,7 +124,7 @@ Create or modify `public/config.js`:
 
 ```javascript
 window.__CONFIG__ = {
-  apiBaseUrl: "/",                          // Backend API base URL
+  apiBaseUrl: "http://localhost:8000",      // Backend API base URL
   wsBaseUrl: "ws://localhost:8000/ws",      // WebSocket URL
   pollInterval: "20000",                    // Polling interval (ms)
   cardFetchInterval: "300000",              // Card refresh interval (ms)
@@ -154,19 +154,19 @@ CONFETTI_DURATION=5000
 <details>
 <summary><strong>Docker Configuration</strong></summary>
 
-When using Docker, pass environment variables:
+When using Docker, pass browser-reachable URLs through the uppercase environment variables:
 
 ```yaml
 services:
   frontend:
     environment:
-      - apiBaseUrl=http://backend:8000
-      - wsBaseUrl=ws://backend:8000/ws
-      - pollInterval=20000
-      - cardFetchInterval=300000
-      - gameIdDefault=demo
-      - enableCelebration=true
-      - confettiDuration=5000
+      - API_BASE_URL=https://api.example.com
+      - WS_BASE_URL=wss://api.example.com/ws
+      - POLL_INTERVAL=20000
+      - CARD_FETCH_INTERVAL=300000
+      - GAME_ID_DEFAULT=demo
+      - ENABLE_CELEBRATION=true
+      - CONFETTI_DURATION=5000
 ```
 
 The `entrypoint.sh` script processes `config.template.js` with these variables at container startup.

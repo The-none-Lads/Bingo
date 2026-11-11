@@ -2,6 +2,8 @@ import json
 import os
 import sqlite3
 import tempfile
+from pathlib import Path
+
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -11,7 +13,7 @@ from sqlalchemy import create_engine, inspect, text
 class TestDatabaseMigration:
     """Test Alembic database migrations and legacy SQLite cards preservation."""
 
-    def test_legacy_cards_db_migration_preserves_cards(self):
+    def test_legacy_cards_db_migration_preserves_cards(self, monkeypatch):
         # 1. Create a temporary SQLite database with the legacy schema
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_file:
             tmp_db_path = tmp_file.name
@@ -40,14 +42,17 @@ class TestDatabaseMigration:
             conn.close()
 
             # 2. Configure Alembic to point to this temp DB
-            alembic_cfg = Config("alembic.ini")
-            alembic_cfg.set_main_option("script_location", "alembic")
+            backend_dir = Path(__file__).resolve().parents[1]
+            alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+            alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
             # For migration execution, use sqlite:/// URI
             normalized_path = tmp_db_path.replace("\\", "/")
-            alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{normalized_path}")
+            database_url = f"sqlite+aiosqlite:///{normalized_path}"
+            alembic_cfg.set_main_option("sqlalchemy.url", database_url)
 
             # Set environment variable so get_database_url() picks it up in env.py
-            os.environ["CARD_DB_PATH"] = tmp_db_path
+            monkeypatch.setenv("CARD_DB_PATH", tmp_db_path)
+            monkeypatch.setenv("DATABASE_URL", database_url)
 
             # 3. Run upgrade
             command.upgrade(alembic_cfg, "head")
@@ -97,4 +102,3 @@ class TestDatabaseMigration:
                     os.remove(tmp_db_path)
                 except OSError:
                     pass
-            os.environ.pop("CARD_DB_PATH", None)
