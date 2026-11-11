@@ -1,5 +1,43 @@
 @import url("tailwindcss");
 
+:root {
+  color-scheme: light;
+  font-family: Inter, "Segoe UI", sans-serif;
+}
+
+html, body, #root {
+  min-height: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.12), transparent 28%),
+    radial-gradient(circle at 12% 16%, rgba(255, 255, 255, 0.08), transparent 20%),
+    radial-gradient(circle at 82% 80%, rgba(18, 96, 57, 0.22), transparent 28%),
+    linear-gradient(135deg, #0d4d2d 0%, #0c3d2a 22%, #0d532f 52%, #0b412b 100%);
+  background-attachment: fixed;
+  color: #f3f4f6;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.03),
+      rgba(255, 255, 255, 0.03) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  opacity: 0.65;
+  mix-blend-mode: soft-light;
+}
+
 @keyframes roll-in-from-main {
   0% {
     transform: translateY(-80px) scale(1.4) rotate(-180deg);

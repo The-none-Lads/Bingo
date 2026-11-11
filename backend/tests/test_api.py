@@ -1,6 +1,7 @@
 import pytest
 from app import app
 from fastapi.testclient import TestClient
+from logic.draws import DrawEngine
 from storage.db import db
 
 
@@ -9,9 +10,15 @@ def clean_db():
     """Clean database before each test."""
     db.games.clear()
     db.cards.clear()
+    db.max_concurrent_games = max(1, min(db.max_games, 100))
+    db.inactivity_timeout_minutes = 45
+    db.save_settings()
     yield
     db.games.clear()
     db.cards.clear()
+    db.max_concurrent_games = max(1, min(db.max_games, 100))
+    db.inactivity_timeout_minutes = 45
+    db.save_settings()
 
 
 @pytest.fixture
@@ -240,6 +247,89 @@ class TestValidationEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["valid"] is True
+
+
+class TestAdminGameLifecycle:
+    def test_stop_game_requires_admin_and_releases_capacity(self):
+        db.games.clear()
+        db.max_concurrent_games = 1
+        db.save_settings()
+
+        with TestClient(app) as client:
+            register = client.post(
+                "/auth/register",
+                json={"username": "adminstop", "email": "adminstop@test.com", "password": "SuperSecretPassword123!"},
+            )
+            assert register.status_code == 201
+
+            login = client.post(
+                "/auth/login",
+                json={"username": "adminstop", "password": "SuperSecretPassword123!"},
+            )
+            assert login.status_code == 200
+
+            start = client.post(
+                "/games/stop_game/start",
+                json={"mode": "regular", "ball_set": 75, "stage": 1, "access_policy": "PUBLIC"},
+            )
+            assert start.status_code == 200
+
+            stop = client.post("/admin/games/stop_game/stop")
+            assert stop.status_code == 200
+            assert stop.json()["message"] == "Game stop_game stopped"
+
+            state = client.get("/games/stop_game/state")
+            assert state.status_code == 200
+            assert state.json()["status"] == "stopped"
+
+            second = client.post(
+                "/games/next_game/start",
+                json={"mode": "regular", "ball_set": 75, "stage": 1, "access_policy": "PUBLIC"},
+            )
+            assert second.status_code == 200
+
+    def test_max_concurrent_games_blocks_new_games(self):
+        db.games.clear()
+        db.max_concurrent_games = 1
+        db.save_settings()
+
+        with TestClient(app) as client:
+            client.post(
+                "/games/first/start",
+                json={"mode": "regular", "ball_set": 75, "stage": 1},
+            )
+            response = client.post(
+                "/games/second/start",
+                json={"mode": "regular", "ball_set": 75, "stage": 1},
+            )
+            assert response.status_code == 409
+            assert "Concurrent game limit reached" in response.json()["detail"]
+
+    def test_inactivity_expiration_marks_game_expired(self):
+        db.games.clear()
+        db.max_concurrent_games = 2
+        db.inactivity_timeout_minutes = 30
+        db.save_settings()
+
+        now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+        old = (now - __import__("datetime").timedelta(minutes=31)).isoformat()
+        db.set_game(
+            "idle_game",
+            {
+                "engine": DrawEngine(max_number=75),
+                "drawn": [],
+                "mode": "regular",
+                "stage": 1,
+                "ball_set": 75,
+                "status": "active",
+                "last_activity_at": old,
+            },
+        )
+
+        expired = db.expire_inactive_games(now=now)
+        assert expired == ["idle_game"]
+        assert db.games["idle_game"]["status"] == "expired"
+        assert db.count_active_games() == 0
 
 
 class TestCORS:

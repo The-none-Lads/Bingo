@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterator, Optional, Tuple
 
 
@@ -271,6 +272,9 @@ class MemoryDB:
         max_cards: int = 25000,
         max_persistent_cards: int = 100000,
         card_db_path: Optional[str] = None,
+        max_concurrent_games: Optional[int] = None,
+        inactivity_timeout_minutes: int = 45,
+        settings_path: Optional[str] = None,
     ):
         self.games: Dict[str, Dict[str, Any]] = {}
         self.cards = CardRepository(
@@ -281,12 +285,141 @@ class MemoryDB:
         self._locks: Dict[str, asyncio.Lock] = {}
         self.max_games = max_games
         self.max_cards = max_cards
+        self.max_concurrent_games = max_concurrent_games if max_concurrent_games is not None else max_games
+        self.inactivity_timeout_minutes = inactivity_timeout_minutes
+        self.settings_path = settings_path or os.getenv(
+            "BINGO_SETTINGS_PATH",
+            os.path.join(os.getcwd(), "data", "settings.json"),
+        )
+        self._settings_lock = threading.Lock()
+        self._load_settings()
+
+    def _coerce_setting(self, value: Any, *, minimum: int, maximum: int, default: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        if parsed < minimum or parsed > maximum:
+            return default
+        return parsed
+
+    def _load_settings(self) -> None:
+        directory = os.path.dirname(self.settings_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        if not os.path.exists(self.settings_path):
+            self.max_concurrent_games = self._coerce_setting(
+                self.max_concurrent_games,
+                minimum=1,
+                maximum=200,
+                default=self.max_concurrent_games,
+            )
+            self.inactivity_timeout_minutes = self._coerce_setting(
+                self.inactivity_timeout_minutes,
+                minimum=30,
+                maximum=60,
+                default=45,
+            )
+            self.save_settings()
+            return
+
+        try:
+            with open(self.settings_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            self.max_concurrent_games = self._coerce_setting(
+                self.max_concurrent_games,
+                minimum=1,
+                maximum=200,
+                default=max(1, min(self.max_games, self.max_concurrent_games)),
+            )
+            self.inactivity_timeout_minutes = self._coerce_setting(
+                self.inactivity_timeout_minutes,
+                minimum=30,
+                maximum=60,
+                default=45,
+            )
+            self.save_settings()
+            return
+
+        self.max_concurrent_games = self._coerce_setting(
+            payload.get("max_concurrent_games", self.max_concurrent_games),
+            minimum=1,
+            maximum=200,
+            default=max(1, min(self.max_games, self.max_concurrent_games)),
+        )
+        self.inactivity_timeout_minutes = self._coerce_setting(
+            payload.get("inactivity_timeout_minutes", self.inactivity_timeout_minutes),
+            minimum=30,
+            maximum=60,
+            default=45,
+        )
+
+    def save_settings(self) -> Dict[str, int]:
+        with self._settings_lock:
+            payload = {
+                "max_concurrent_games": self._coerce_setting(
+                    self.max_concurrent_games,
+                    minimum=1,
+                    maximum=200,
+                    default=max(1, min(self.max_games, self.max_concurrent_games)),
+                ),
+                "inactivity_timeout_minutes": self._coerce_setting(
+                    self.inactivity_timeout_minutes,
+                    minimum=30,
+                    maximum=60,
+                    default=45,
+                ),
+            }
+            directory = os.path.dirname(self.settings_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(self.settings_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            self.max_concurrent_games = payload["max_concurrent_games"]
+            self.inactivity_timeout_minutes = payload["inactivity_timeout_minutes"]
+            return payload
+
+    def get_active_games(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            game_id: game
+            for game_id, game in self.games.items()
+            if game.get("status") == "active"
+        }
+
+    def count_active_games(self) -> int:
+        return len(self.get_active_games())
 
     def get_lock(self, game_id: str) -> asyncio.Lock:
         """Get or create an asyncio.Lock for a specific game_id to ensure serialized operations."""
         if game_id not in self._locks:
             self._locks[game_id] = asyncio.Lock()
         return self._locks[game_id]
+
+    def _parse_timestamp(self, value: Any) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc)
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        return None
+
+    def touch_game_activity(self, game_id: str, *, now: Optional[datetime] = None) -> None:
+        game = self.games.get(game_id)
+        if not game:
+            return
+        if game.get("status") not in {"active", "finished", "expired", "stopped", "completed"}:
+            game["status"] = "active"
+        game["last_activity_at"] = (now or datetime.now(timezone.utc)).isoformat()
 
     def set_game(self, game_id: str, game_data: Dict[str, Any]) -> None:
         """Store game data with resource bound enforcement (in-memory only)."""
@@ -296,7 +429,47 @@ class MemoryDB:
             del self.games[oldest_key]
             if oldest_key in self._locks:
                 del self._locks[oldest_key]
+        if "last_activity_at" not in game_data:
+            game_data["last_activity_at"] = datetime.now(timezone.utc).isoformat()
+        if "status" not in game_data:
+            game_data["status"] = "active"
         self.games[game_id] = game_data
+
+    def mark_game_terminal(
+        self,
+        game_id: str,
+        *,
+        status: str,
+        reason: str,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        game = self.games.get(game_id)
+        if not game:
+            return False
+        if game.get("status") in {"stopped", "expired", "finished", "completed"}:
+            return False
+        game["status"] = status
+        game["ended_reason"] = reason
+        game["ended_at"] = (now or datetime.now(timezone.utc)).isoformat()
+        game["last_activity_at"] = game["ended_at"]
+        return True
+
+    def expire_inactive_games(self, *, now: Optional[datetime] = None) -> list[str]:
+        current_time = now or datetime.now(timezone.utc)
+        expired: list[str] = []
+        for game_id, game in list(self.games.items()):
+            if game.get("status") != "active":
+                continue
+            last_activity = self._parse_timestamp(game.get("last_activity_at"))
+            if last_activity is None:
+                if "created_at" in game:
+                    last_activity = self._parse_timestamp(game.get("created_at"))
+                if last_activity is None:
+                    last_activity = current_time
+            if current_time - last_activity > timedelta(minutes=self.inactivity_timeout_minutes):
+                if self.mark_game_terminal(game_id, status="expired", reason="inactivity", now=current_time):
+                    expired.append(game_id)
+        return expired
 
     def get_game_owner(self, game_id: str) -> Optional[str]:
         """Get the owner_id of a game, or None if not found/system-owned."""
@@ -338,4 +511,6 @@ db = MemoryDB(
     max_games=_int_env("MAX_GAMES", 100),
     max_cards=_int_env("MAX_MEMORY_CARDS", 25000),
     max_persistent_cards=_int_env("MAX_PERSISTENT_CARDS", 100000),
+    max_concurrent_games=_int_env("MAX_CONCURRENT_GAMES", 100),
+    inactivity_timeout_minutes=_int_env("GAME_INACTIVITY_TIMEOUT_MINUTES", 45),
 )
