@@ -13,7 +13,7 @@ services:
     volumes:
       - card-data:/app/data
     ports:
-      - "8000:8000"
+      - "19002:8000"
     restart: unless-stopped
 
   frontend:
