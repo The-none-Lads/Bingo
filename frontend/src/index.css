@@ -38,6 +38,29 @@ body::before {
   mix-blend-mode: soft-light;
 }
 
+.casino-background-pattern {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(ellipse at 12% 10%, rgba(18, 107, 67, 0.18), transparent 30%),
+    radial-gradient(ellipse at 88% 92%, rgba(2, 28, 21, 0.22), transparent 38%),
+    radial-gradient(ellipse at 16% 12%, rgba(177, 137, 53, 0.045), transparent 25%),
+    repeating-linear-gradient(
+      45deg,
+      transparent 0 28px,
+      rgba(120, 166, 121, 0.05) 28px 29px,
+      transparent 29px 56px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      transparent 0 28px,
+      rgba(3, 31, 23, 0.28) 28px 29px,
+      transparent 29px 56px
+    );
+}
+
 @keyframes roll-in-from-main {
   0% {
     transform: translateY(-80px) scale(1.4) rotate(-180deg);

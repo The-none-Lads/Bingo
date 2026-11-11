@@ -97,8 +97,9 @@ export function PlayerView({ initialToken = '', onClose }) {
   // Token entry form
   if (!gameData) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+      <div className="min-h-screen relative bg-gradient-to-br from-emerald-950 via-green-950 to-emerald-900 flex items-center justify-center p-4">
+        <div aria-hidden="true" className="casino-background-pattern" />
+        <div className="relative z-10 bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
           <div className="text-center mb-6">
             <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Users className="w-8 h-8 text-purple-600" />
@@ -166,8 +167,9 @@ export function PlayerView({ initialToken = '', onClose }) {
 
   // Game view
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
-      <div className="max-w-lg mx-auto">
+    <div className="min-h-screen relative bg-gradient-to-br from-emerald-950 via-green-950 to-emerald-900 p-4">
+      <div aria-hidden="true" className="casino-background-pattern" />
+      <div className="max-w-lg mx-auto relative z-10">
         {/* Header */}
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center gap-2">
