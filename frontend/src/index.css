@@ -39,6 +39,10 @@ body::before {
 }
 
 .casino-background-pattern {
+  --casino-deco-line-light: rgba(120, 166, 121, 0.05);
+  --casino-deco-line-dark: rgba(3, 31, 23, 0.28);
+  --casino-antique-gold: rgba(190, 155, 92, 0.15);
+
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -46,19 +50,51 @@ body::before {
   background-image:
     radial-gradient(ellipse at 12% 10%, rgba(18, 107, 67, 0.18), transparent 30%),
     radial-gradient(ellipse at 88% 92%, rgba(2, 28, 21, 0.22), transparent 38%),
-    radial-gradient(ellipse at 16% 12%, rgba(177, 137, 53, 0.045), transparent 25%),
     repeating-linear-gradient(
       45deg,
       transparent 0 28px,
-      rgba(120, 166, 121, 0.05) 28px 29px,
+      var(--casino-deco-line-light) 28px 29px,
       transparent 29px 56px
     ),
     repeating-linear-gradient(
       -45deg,
       transparent 0 28px,
-      rgba(3, 31, 23, 0.28) 28px 29px,
+      var(--casino-deco-line-dark) 28px 29px,
       transparent 29px 56px
     );
+}
+
+.casino-background-pattern::before {
+  content: "♠  ♥  ♦  ♣";
+  position: absolute;
+  left: 50%;
+  bottom: 8%;
+  transform: translateX(-50%);
+  color: var(--casino-antique-gold);
+  font-family: "Segoe UI Symbol", serif;
+  font-size: 0.875rem;
+  letter-spacing: 0.75rem;
+  white-space: pre;
+  text-shadow: 0 0 12px rgba(190, 155, 92, 0.1);
+  pointer-events: none;
+}
+
+.casino-background-pattern::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(
+      circle,
+      transparent 0 7px,
+      var(--casino-antique-gold) 7px 8px,
+      transparent 8px 11px,
+      rgba(55, 109, 75, 0.12) 11px 12px,
+      transparent 12px 16px
+    );
+  background-size: 320px 320px;
+  background-position: 160px 160px;
+  pointer-events: none;
 }
 
 @keyframes roll-in-from-main {
