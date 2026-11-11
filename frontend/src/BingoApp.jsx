@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, CheckCircle2, Settings, Printer, Crown } from 'lucide-react';
+import { Play, CheckCircle2, Settings, Printer, Crown, User, Shield, ExternalLink, Users, Lock, Globe } from 'lucide-react';
+import { AuthModal } from './AuthModal';
+import { AdminDashboard } from './AdminDashboard';
+import { PlayerView } from './PlayerView';
 import { config } from './config';
 import { getBallTransition } from './ballHistory';
 
@@ -67,6 +70,13 @@ const BingoApp = () => {
   const [openCard, setOpenCard] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [showAllDrawn, setShowAllDrawn] = useState(false);
+  const [playerLinks, setPlayerLinks] = useState([]);
+  const [playerViewToken, setPlayerViewToken] = useState(null);
+
+  // Authentication & Access Control State
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isPrivateGame, setIsPrivateGame] = useState(false);
 
   // Admin credential (never sent by the public display view; only used for
   // the privileged start/draw/stage/cards-batch/cards-list requests). This
@@ -97,6 +107,82 @@ const BingoApp = () => {
   const POLL_INTERVAL = config.pollInterval;
   const CARD_FETCH_INTERVAL = config.cardFetchInterval;
 
+  // Fetch current authenticated user on load
+  const fetchCurrentUser = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentUser(data);
+      } else {
+        setCurrentUser(null);
+      }
+    } catch {
+      setCurrentUser(null);
+    }
+  }, [API_BASE]);
+
+  useEffect(() => {
+    fetchCurrentUser();
+  }, [fetchCurrentUser]);
+
+  // Detect URL parameters for player token or view routing
+  useEffect(() => {
+    try {
+      const pathname = window.location.pathname;
+      const searchParams = new URLSearchParams(window.location.search);
+      const tokenParam = searchParams.get('token');
+      const gameParam = searchParams.get('game');
+      const viewParam = searchParams.get('view');
+
+      if (gameParam) {
+        setGameId(gameParam);
+      }
+
+      if (pathname.startsWith('/b/')) {
+        const pathToken = pathname.replace(/^\/b\//, '').split('/')[0].split('?')[0];
+        if (pathToken) {
+          setPlayerViewToken(pathToken);
+          setView('player');
+          return;
+        }
+      }
+
+      if (tokenParam) {
+        setPlayerViewToken(tokenParam);
+        setView('player');
+        return;
+      }
+
+      if (viewParam && ['display', 'admin', 'system-admin', 'player'].includes(viewParam)) {
+        setView(viewParam);
+      }
+    } catch (e) {
+      console.error('Failed to parse URL routing:', e);
+    }
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        credentials: 'include'
+      });
+      if (res.ok) {
+        setCurrentUser(null);
+        setIsAuthModalOpen(false);
+        setTimeout(fetchGameState, 50);
+      }
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
   // Persist the admin key locally, mirroring the existing gameId pattern.
   useEffect(() => {
     localStorage.setItem('bingo_admin_key', adminKey);
@@ -125,7 +211,8 @@ const BingoApp = () => {
   const fetchCardsForGame = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/games/${gameId}/cards`, {
-        headers: adminHeaders()
+        headers: adminHeaders(),
+        credentials: 'include'
       });
       if (response.ok) {
         const data = await response.json();
@@ -194,18 +281,49 @@ const BingoApp = () => {
   // Function to fetch game state
   const fetchGameState = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/games/${gameId}/state`);
+      const response = await fetch(`${API_BASE}/games/${gameId}/state`, {
+        headers: adminHeaders(),
+        credentials: 'include'
+      });
+      if (response.status === 401 || response.status === 403) {
+        setIsPrivateGame(true);
+        setGameState(null);
+        return;
+      }
       if (response.ok) {
+        setIsPrivateGame(false);
         const data = await response.json();
         const now = Date.now();
         if (!wsConnected || now - lastUpdateRef.current > 1000) {
           updateGameState(data, 'poll');
         }
+      } else if (response.status === 404) {
+        setIsPrivateGame(false);
       }
     } catch (err) {
       console.error('Failed to fetch game state:', err);
     }
-  }, [gameId, wsConnected, updateGameState, API_BASE]);
+  }, [gameId, wsConnected, updateGameState, API_BASE, adminHeaders]);
+
+  // Refresh game state whenever current user changes (e.g. login/logout)
+  useEffect(() => {
+    fetchGameState();
+  }, [currentUser, fetchGameState]);
+
+  const fetchPlayerLinks = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/games/${gameId}/links`, {
+        headers: adminHeaders(),
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPlayerLinks(data.links.map(l => ({ ...l, token: null })));
+      }
+    } catch (err) {
+      console.error('Failed to fetch links:', err);
+    }
+  }, [gameId, API_BASE, adminHeaders]);
 
   // Handle Game ID change
   useEffect(() => {
@@ -217,7 +335,9 @@ const BingoApp = () => {
     setDroppingBall(null);
     fetchCardsForGame();
     fetchGameState();
-  }, [gameId, fetchCardsForGame, fetchGameState]);
+    // Load existing player links for this game
+    fetchPlayerLinks();
+  }, [gameId, fetchCardsForGame, fetchGameState, fetchPlayerLinks]);
 
   // Confetti Animation with safe cleanup
   const launchConfetti = useCallback(() => {
@@ -281,7 +401,7 @@ const BingoApp = () => {
 
   // WebSocket connection lifecycle
   useEffect(() => {
-    const wsUrl = `${WS_BASE}/${gameId}`;
+    const wsUrl = adminKey ? `${WS_BASE}/${gameId}?token=${encodeURIComponent(adminKey)}` : `${WS_BASE}/${gameId}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -320,7 +440,7 @@ const BingoApp = () => {
         wsRef.current.close();
       }
     };
-  }, [gameId, WS_BASE, updateGameState, launchConfetti]);
+  }, [gameId, WS_BASE, adminKey, updateGameState, launchConfetti]);
 
   // Polling as fallback when WebSocket is inactive
   useEffect(() => {
@@ -329,9 +449,9 @@ const BingoApp = () => {
     pollIntervalRef.current = setInterval(async () => {
       await fetchGameState();
 
-      // Check if WebSocket is closed and attempt reconnect
-      if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
-        const wsUrl = `${config.wsBaseUrl}/${gameId}`;
+      // Check if WebSocket is closed and attempt reconnect (skip if known private and unauthenticated)
+      if ((!isPrivateGame || currentUser || adminKey) && (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED)) {
+        const wsUrl = adminKey ? `${config.wsBaseUrl}/${gameId}?token=${encodeURIComponent(adminKey)}` : `${config.wsBaseUrl}/${gameId}`;
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
@@ -362,7 +482,7 @@ const BingoApp = () => {
         pollIntervalRef.current = null;
       }
     };
-  }, [gameId, wsConnected, fetchGameState, updateGameState, POLL_INTERVAL, launchConfetti]);
+  }, [gameId, wsConnected, isPrivateGame, currentUser, adminKey, fetchGameState, updateGameState, POLL_INTERVAL, launchConfetti]);
 
   // Periodic card fetch
   useEffect(() => {
@@ -377,12 +497,40 @@ const BingoApp = () => {
     };
   }, [fetchCardsForGame, CARD_FETCH_INTERVAL]);
 
+  const handleAuthSuccess = (user) => {
+    setCurrentUser(user);
+    setIsAuthModalOpen(false);
+    setTimeout(fetchGameState, 50);
+  };
+
+  const updateAccessPolicy = async (newPolicy) => {
+    try {
+      const res = await fetch(`${API_BASE}/games/${gameId}/access-policy`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        credentials: 'include',
+        body: JSON.stringify({ policy: newPolicy })
+      });
+      if (res.ok) {
+        setGameState(prev => prev ? { ...prev, access_policy: newPolicy } : prev);
+        setIsPrivateGame(newPolicy !== 'PUBLIC');
+      } else {
+        const err = await res.json();
+        console.error('Failed to update access policy:', err);
+      }
+    } catch (err) {
+      console.error('Failed to update access policy:', err);
+    }
+  };
+
   const startGame = async (mode = 'progressive_rows', stage = 1) => {
     try {
+      const currentPolicy = gameState?.access_policy || 'LINK_ONLY';
       await fetch(`${API_BASE}/games/${gameId}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-        body: JSON.stringify({ mode, ball_set: 75, stage })
+        credentials: 'include',
+        body: JSON.stringify({ mode, ball_set: 75, stage, access_policy: currentPolicy })
       });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
@@ -396,7 +544,8 @@ const BingoApp = () => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/draw`, {
         method: 'POST',
-        headers: adminHeaders()
+        headers: adminHeaders(),
+        credentials: 'include'
       });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
@@ -410,7 +559,8 @@ const BingoApp = () => {
     try {
       await fetch(`${API_BASE}/games/${gameId}/stage/${stage}`, {
         method: 'POST',
-        headers: adminHeaders()
+        headers: adminHeaders(),
+        credentials: 'include'
       });
       if (!wsConnected) {
         setTimeout(fetchGameState, 100);
@@ -425,6 +575,7 @@ const BingoApp = () => {
       const res = await fetch(`${API_BASE}/cards/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        credentials: 'include',
         body: JSON.stringify({ count, game_id: gameId, persistent: storePermanently })
       });
       const data = await res.json();
@@ -447,6 +598,7 @@ const BingoApp = () => {
       const res = await fetch(`${API_BASE}/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ game_id: gameId, serial: cardToValidate.trim() })
       });
       const data = await res.json();
@@ -470,6 +622,40 @@ const BingoApp = () => {
       diagonals: 'Diagonals'
     };
     return names[mode] || mode;
+  };
+
+  // Player link management
+  const createPlayerLink = async (policy = 'LINK_ONLY', password = null) => {
+    try {
+      const res = await fetch(`${API_BASE}/games/${gameId}/links`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        credentials: 'include',
+        body: JSON.stringify({ policy, password: password || undefined })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPlayerLinks(prev => [...prev, { id: data.link_id, token: data.access_token, policy: data.policy }]);
+      } else {
+        const err = await res.json();
+        console.error('Failed to create link:', err);
+      }
+    } catch (err) {
+      console.error('Failed to create link:', err);
+    }
+  };
+
+  const revokePlayerLink = async (linkId) => {
+    try {
+      await fetch(`${API_BASE}/games/${gameId}/links/${linkId}`, {
+        method: 'DELETE',
+        headers: adminHeaders(),
+        credentials: 'include'
+      });
+      setPlayerLinks(prev => prev.filter(l => l.id !== linkId));
+    } catch (err) {
+      console.error('Failed to revoke link:', err);
+    }
   };
 
   // Display View - Casino Style with 5-Ball History
@@ -509,7 +695,7 @@ const BingoApp = () => {
               </h1>
               <div className="absolute -bottom-2 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 rounded"></div>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <input
                 type="text"
                 value={gameId}
@@ -518,16 +704,76 @@ const BingoApp = () => {
                 placeholder="Game ID"
               />
               <button
-                onClick={() => setView('admin')}
-                className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg"
+                onClick={() => setView('player')}
+                className="px-4 py-2.5 bg-black/50 border border-yellow-500 text-yellow-300 font-bold rounded-lg hover:bg-yellow-500/20 transition-all flex items-center gap-2"
+                title="Player View"
               >
-                <Settings className="w-6 h-6" />
+                <Users className="w-5 h-5" />
+                <span className="hidden md:inline">Player View</span>
+              </button>
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className="px-4 py-2.5 bg-black/50 border border-yellow-500 text-yellow-300 font-bold rounded-lg hover:bg-yellow-500/20 transition-all flex items-center gap-2"
+                title={currentUser ? `Signed in as ${currentUser.username} (${currentUser.role})` : 'Sign In'}
+              >
+                <User className="w-5 h-5" />
+                <span className="hidden md:inline">{currentUser ? currentUser.username : 'Sign In'}</span>
+                {currentUser?.role === 'ADMIN' && <Shield className="w-4 h-4 text-red-400" />}
+              </button>
+              {currentUser?.role === 'ADMIN' && (
+                <button
+                  onClick={() => setView('system-admin')}
+                  className="px-4 py-2.5 bg-red-950/70 border border-red-500 text-red-300 font-bold rounded-lg hover:bg-red-900/50 transition-all flex items-center gap-2"
+                  title="System Administration"
+                >
+                  <Shield className="w-5 h-5 text-red-400" />
+                  <span className="hidden md:inline">System Admin</span>
+                </button>
+              )}
+              <button
+                onClick={() => setView('admin')}
+                className="px-5 py-2.5 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-bold rounded-lg hover:from-yellow-300 hover:to-yellow-500 transition-all shadow-lg flex items-center gap-2"
+                title="Host Controls"
+              >
+                <Settings className="w-5 h-5" />
+                <span className="hidden lg:inline">Host Controls</span>
               </button>
             </div>
           </div>
 
           {/* Main Display Area */}
-          {gameState && (
+          {!currentUser && (isPrivateGame || (gameState && gameState.access_policy !== 'PUBLIC')) ? (
+            <div className="flex flex-col items-center justify-center py-16">
+              <div className="bg-gradient-to-br from-gray-900 via-black to-gray-950 border-2 border-yellow-500/60 rounded-3xl p-10 max-w-lg w-full text-center backdrop-blur-md shadow-[0_0_50px_rgba(255,215,0,0.15)] relative overflow-hidden">
+                <div className="absolute inset-0 bg-yellow-500/5 pointer-events-none"></div>
+                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-yellow-500/10 border-2 border-yellow-500 flex items-center justify-center text-yellow-400 shadow-[0_0_20px_rgba(255,215,0,0.3)]">
+                  <Lock className="w-10 h-10" />
+                </div>
+                <h2 className="text-3xl font-extrabold text-yellow-300 mb-3 tracking-wide" style={{ textShadow: '0 0 15px rgba(255,215,0,0.4)' }}>
+                  Private Game
+                </h2>
+                <p className="text-gray-300 mb-8 leading-relaxed text-sm">
+                  Game <span className="font-mono text-yellow-400 font-bold px-1.5 py-0.5 bg-yellow-400/10 rounded border border-yellow-400/20">{gameId}</span> is private. Sign in with an authorized account or join with an authorized player link to view live bingo.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                  <button
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className="flex-1 px-5 py-3 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black font-extrabold rounded-xl shadow-lg hover:from-yellow-300 hover:to-yellow-500 transition-all flex items-center justify-center gap-2"
+                  >
+                    <User className="w-5 h-5" />
+                    Sign In
+                  </button>
+                  <button
+                    onClick={() => setView('player')}
+                    className="flex-1 px-5 py-3 bg-black/60 border border-yellow-500/70 text-yellow-300 font-bold rounded-xl hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Users className="w-5 h-5" />
+                    Join as Player
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : gameState ? (
             <>
               <div className="mb-12 flex flex-col items-center">
                 <div className="relative w-full max-w-4xl">
@@ -627,6 +873,11 @@ const BingoApp = () => {
                 </div>
               </div>
             </>
+          ) : (
+            <div className="text-center py-20 text-gray-400">
+              <div className="text-2xl font-bold text-yellow-500/80 mb-2">No Active Game</div>
+              <p>Game "{gameId}" has not been started yet. Use Host Controls to start a game.</p>
+            </div>
           )}
 
           {/* Celebration Overlay */}
@@ -649,18 +900,48 @@ const BingoApp = () => {
               </div>
             </div>
           )}
+
+          {/* Auth Modal */}
+          <AuthModal
+            isOpen={isAuthModalOpen}
+            onClose={() => setIsAuthModalOpen(false)}
+            currentUser={currentUser}
+            onAuthSuccess={handleAuthSuccess}
+            onLogout={handleLogout}
+            apiBaseUrl={API_BASE}
+          />
         </div>
       </div>
     );
   }
 
-  // Admin View
+  // System Admin Dashboard View
+  if (view === 'system-admin') {
+    return (
+      <AdminDashboard
+        currentUser={currentUser}
+        onClose={() => setView('admin')}
+      />
+    );
+  }
+
+  // Player View
+  if (view === 'player') {
+    return (
+      <PlayerView
+        initialToken={playerViewToken || ''}
+        onClose={() => setView('display')}
+      />
+    );
+  }
+
+  // Host Game Controls View (view === 'admin' or fallback)
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <div className="flex items-center gap-4">
-            <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
+            <h1 className="text-4xl font-bold text-gray-900">Host Game Controls</h1>
             <div
               className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
                 wsConnected ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
@@ -672,49 +953,156 @@ const BingoApp = () => {
               {wsConnected ? 'Connected' : 'Polling Mode'}
             </div>
           </div>
-          <button
-            onClick={() => setView('display')}
-            className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all"
-          >
-            Switch to Display View
-          </button>
+          <div className="flex items-center gap-3">
+            {currentUser?.role === 'ADMIN' && (
+              <button
+                onClick={() => setView('system-admin')}
+                className="px-4 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg hover:bg-red-100 transition-all text-sm font-medium flex items-center gap-2"
+                title="Open System Administration Dashboard"
+              >
+                <Shield className="w-4 h-4 text-red-600" />
+                <span>System Admin</span>
+              </button>
+            )}
+            <button
+              onClick={() => setView('player')}
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-gray-700 text-sm font-medium"
+              title="Open Player View"
+            >
+              <Users className="w-4 h-4" />
+              <span>Player View</span>
+            </button>
+            <button
+              onClick={() => setIsAuthModalOpen(true)}
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-gray-700 text-sm font-medium"
+              title={currentUser ? `Signed in as ${currentUser.username} (${currentUser.role})` : 'Sign In'}
+            >
+              <User className="w-4 h-4" />
+              <span>{currentUser ? currentUser.username : 'Sign In'}</span>
+            </button>
+            <button
+              onClick={() => setView('display')}
+              className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all font-medium"
+            >
+              Switch to Display View
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Game Controls */}
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <Play className="w-6 h-6" />
-              Game Controls
-            </h2>
+            <Play className="w-6 h-6" />
+            Game Controls
+          </h2>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">Game ID</label>
-                <input
-                  type="text"
-                  value={gameId}
-                  onChange={(e) => setGameId(e.target.value)}
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                />
-              </div>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Game ID</label>
+              <input
+                type="text"
+                value={gameId}
+                onChange={(e) => setGameId(e.target.value)}
+                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+              />
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Admin Key
-                  <span className="ml-2 text-xs font-normal text-gray-500">
-                    (only needed if the backend has ADMIN_API_KEY configured)
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Admin Key (optional)
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  Required only if ADMIN_API_KEY is configured on the server
+                </span>
+              </label>
+              <input
+                type="password"
+                value={adminKey}
+                onChange={(e) => setAdminKey(e.target.value)}
+                placeholder="Leave empty if server doesn't require an admin key"
+                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none font-mono text-sm"
+                autoComplete="off"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Signed in as
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  ({currentUser?.role || 'Guest / Unauthenticated'})
+                </span>
+              </label>
+              <div className="flex items-center gap-2">
+                <div className="px-4 py-2 bg-purple-50 border border-purple-200 rounded-lg text-purple-700 font-medium">
+                  {currentUser?.username || 'Anonymous'}
+                </div>
+                {currentUser?.role === 'ADMIN' && (
+                  <span className="px-2.5 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded-full flex items-center gap-1">
+                    <Shield className="w-3.5 h-3.5 text-red-600" />
+                    ADMIN
                   </span>
-                </label>
-                <input
-                  type="password"
-                  value={adminKey}
-                  onChange={(e) => setAdminKey(e.target.value)}
-                  placeholder="Leave blank for open/dev deployments"
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                  autoComplete="off"
-                />
+                )}
+                {currentUser?.role === 'OPERATOR' && (
+                  <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
+                    OPERATOR
+                  </span>
+                )}
+                {currentUser?.role === 'AUDITOR' && (
+                  <span className="px-2.5 py-1 bg-gray-100 text-gray-800 text-xs font-semibold rounded-full">
+                    AUDITOR
+                  </span>
+                )}
               </div>
+            </div>
+
+            {/* Game Access Policy Toggle */}
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {gameState?.access_policy === 'PUBLIC' ? (
+                    <Globe className="w-5 h-5 text-green-600 flex-shrink-0" />
+                  ) : (
+                    <Lock className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                  )}
+                  <div>
+                    <div className="text-sm font-bold text-gray-800">
+                      Access Policy: <span className={gameState?.access_policy === 'PUBLIC' ? 'text-green-600 font-extrabold' : 'text-amber-600 font-extrabold'}>{gameState?.access_policy || 'LINK_ONLY'}</span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {gameState?.access_policy === 'PUBLIC'
+                        ? 'Public: Any guest can view live bingo without signing in.'
+                        : 'Private (Link Only): Only signed-in users or authorized player links can view.'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-2.5">
+                <button
+                  type="button"
+                  onClick={() => updateAccessPolicy('PUBLIC')}
+                  className={`flex-1 py-1.5 px-3 rounded text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    gameState?.access_policy === 'PUBLIC'
+                      ? 'bg-green-600 text-white shadow-sm'
+                      : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  Set Public
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateAccessPolicy('LINK_ONLY')}
+                  className={`flex-1 py-1.5 px-3 rounded text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    gameState?.access_policy !== 'PUBLIC'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  Set Private (Link Only)
+                </button>
+              </div>
+            </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <button
@@ -781,6 +1169,69 @@ const BingoApp = () => {
                   </div>
                 </div>
               )}
+
+              {/* Player Links */}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                  <ExternalLink className="w-5 h-5 text-purple-600" />
+                  Player Links
+                </h3>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <select
+                      id="link-policy"
+                      className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                      defaultValue="LINK_ONLY"
+                    >
+                      <option value="PUBLIC">Public (no link needed)</option>
+                      <option value="LINK_ONLY">Link Required</option>
+                      <option value="PASSWORD">Password Protected</option>
+                    </select>
+                  </div>
+                  <input
+                    type="text"
+                    id="link-password"
+                    placeholder="Password (optional, for PASSWORD policy)"
+                    className="w-full px-3 py-2 border rounded-lg text-sm"
+                  />
+                  <button
+                    onClick={() => {
+                      const policy = document.getElementById('link-policy').value;
+                      const password = document.getElementById('link-password').value || null;
+                      createPlayerLink(policy, password);
+                    }}
+                    className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all text-sm font-medium"
+                  >
+                    Generate Player Link
+                  </button>
+                  {playerLinks.length > 0 && (
+                    <div className="space-y-2 mt-3">
+                      {playerLinks.map((link) => (
+                        <div key={link.id} className="flex items-center gap-2 bg-gray-50 rounded-lg p-2">
+                          <input
+                            type="text"
+                            readOnly
+                            value={`${window.location.origin}/b/${link.token}`}
+                            className="flex-1 px-2 py-1 text-xs border rounded bg-white"
+                          />
+                          <button
+                            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/b/${link.token}`)}
+                            className="px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300"
+                          >
+                            Copy
+                          </button>
+                          <button
+                            onClick={() => revokePlayerLink(link.id)}
+                            className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200"
+                          >
+                            Revoke
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1078,8 +1529,18 @@ const BingoApp = () => {
           ))}
         </div>
       </div>
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onAuthSuccess={handleAuthSuccess}
+        onLogout={handleLogout}
+        apiBaseUrl={API_BASE}
+      />
     </div>
   );
 };
 
-export default BingoApp;
+export default BingoApp;

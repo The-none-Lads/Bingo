@@ -1,5 +1,4 @@
 ---
-
 name: CI
 
 on:
@@ -8,183 +7,84 @@ on:
   pull_request:
     branches: ["**"]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  python-tests:
-    name: Python tests
+  backend:
+    name: Backend tests
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: backend
+      PYTHON_DOTENV_DISABLED: "true"
+      ENVIRONMENT: development
+      ALLOW_REGISTRATION: "true"
+      CORS_ORIGINS: "http://test,http://localhost:3000"
+      CORS_ALLOW_CREDENTIALS: "true"
+      CARD_DB_PATH: ":memory:"
+      DATABASE_URL: "sqlite+aiosqlite:///:memory:"
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.13
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
 
-      - name: Install Python dependencies (if present)
-        shell: bash
-        run: |
-          set -e
-          echo "Looking for Python dependency files..."
-          if [ -f backend/requirements.txt ]; then
-            python -m pip install --upgrade pip
-            pip install -r backend/requirements.txt
-          fi
-          if [ -f backend/requirements-dev.txt ]; then
-            pip install -r backend/requirements-dev.txt
-          fi
-          if [ ! -f backend/requirements.txt ] && [ -f pyproject.toml ]; then
-            python -m pip install --upgrade pip
-            pip install -e .
-          fi
-          echo "Python install step completed."
+      - name: Check Python syntax and undefined names
+        run: python -m flake8 backend --select=E9,F63,F7,F82 --show-source --statistics
 
-      - name: Run pytest if tests exist
-        run: python -m pytest -q
+      - name: Run backend unit and integration tests
+        run: python -m pytest backend/tests backend/integration_tests -q
 
-  node-tests:
-    name: Node / JavaScript tests
+  frontend:
+    name: Frontend checks
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 18
+      - name: Set up Node.js 25
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-
-      - name: Cache node modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.npm
-            node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
-      - name: Install & run npm tests if package.json exists
-        shell: bash
-        run: |
-          set -e
-          if [ -f package.json ]; then
-            echo "package.json found. Installing dependencies..."
-            if [ -f package-lock.json ]; then
-              npm ci
-            else
-              npm install
-            fi
-            if npm run | grep -q ' test'; then
-              echo "Running npm test..."
-              npm test || ( echo "npm test failed"; exit 1 )
-            else
-              echo "No npm test script defined; skipping npm test."
-            fi
-          else
-            echo "No package.json found; skipping Node.js tests."
-          fi
-
-  lint:
-    name: Lint codebase
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.13 for linting
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.13
-
-      - name: Install Python dependencies (if present)
-        shell: bash
-        run: |
-          set -e
-          echo "Looking for Python dependency files..."
-          if [ -f backend/requirements.txt ]; then
-            python -m pip install --upgrade pip
-            pip install -r backend/requirements.txt
-          fi
-          if [ -f backend/requirements-dev.txt ]; then
-            pip install -r backend/requirements-dev.txt
-          fi
-          if [ ! -f backend/requirements.txt ] && [ -f pyproject.toml ]; then
-            python -m pip install --upgrade pip
-            pip install -e .
-          fi
-          echo "Python install step completed."
-
-      - name: Lint with flake8 (warnings only)
-        run: |
-          flake8 . --exclude=node_modules,frontend/node_modules \
-          --count \
-          --statistics
-        continue-on-error: true
-
-      - name: Check formatting with black (warnings only)
-        run: |
-          black --check . --exclude node_modules/ \
-          --exclude frontend/node_modules/
-        continue-on-error: true
-
-      - name: Sort imports with isort (warnings only)
-        run: isort --check-only . --skip node_modules --skip frontend/node_modules
-        continue-on-error: true
-
-      - name: Type check with mypy (warnings only)
-        run: mypy . --ignore-missing-imports
-        continue-on-error: true
-
-      - name: Set up Node.js 18 for linting
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
+          node-version: 25
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm install
+        run: npm ci --prefix frontend
 
-      - name: Lint frontend with ESLint (warnings only)
-        run: |
-          cd frontend
-          npx eslint . --ext .js,.jsx,.ts,.tsx
-        continue-on-error: true
+      - name: Run frontend tests
+        run: npm test --prefix frontend
 
-      - name: Lint styles with Stylelint (warnings only)
-        run: |
-          cd frontend
-          npx stylelint "src/**/*.css"
-        continue-on-error: true
+      - name: Lint frontend
+        run: npm run lint --prefix frontend
 
-      - name: Lint YAML with yamllint (warnings only)
-        run: |
-          pip install yamllint
-          yamllint . --config-file .yamllint
-        continue-on-error: true
+      - name: Build frontend
+        run: npm run build --prefix frontend
 
-      - name: Lint JSON with jq (warnings only)
-        run: |
-          find . -name '*.json' -not -path '*/node_modules/*' -exec jq empty {} \;
-        continue-on-error: true
+  containers:
+    name: Container builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - name: Lint HTML with htmlhint (warnings only)
-        run: |
-          cd frontend
-          npx htmlhint "**/*.html"
-        continue-on-error: true
+      - name: Validate Compose configuration
+        run: docker compose config -q
 
-      - name: Lint Dockerfiles with hadolint (warnings only)
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          recursive: true
-        continue-on-error: true
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t bingo-backend:ci .
+
+      - name: Build frontend image
+        run: docker build -f frontend/Dockerfile -t bingo-frontend:ci .

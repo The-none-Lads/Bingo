@@ -18,9 +18,10 @@ async def client(request):
     against a live uvicorn server (realistic).
     """
     if request.param == "inprocess":
-        transport = httpx.ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            yield ac
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                yield ac
     else:
         # Run live uvicorn server via current python executable
         backend_dir = os.path.join(os.path.dirname(__file__), "..")

@@ -536,13 +536,19 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## 🔧 Configuration
 
+### Production bootstrap
+
+For production, set `ENVIRONMENT=production`, configure `CORS_ORIGINS` to the exact public frontend origin(s), and provide a random `INITIAL_ADMIN_TOKEN` of at least 32 characters before starting the backend. Production has no open bootstrap access, rejects wildcard or missing CORS origins, and disables public registration by default. Create the first administrator once with `POST /auth/register` and the `X-Bootstrap-Token` header, then remove or rotate the bootstrap token. Set `ALLOW_REGISTRATION=true` only if ongoing public account creation is intended.
+
 <details>
 <summary><strong>Backend Environment Variables</strong></summary>
 
-- `CORS_ORIGINS` - Comma-separated list of allowed origins (e.g., `"http://localhost:3000,http://localhost:80"`). If unset, falls back to a safe set of common localhost origins for local development; set explicitly for production.
+- `CORS_ORIGINS` - Comma-separated list of allowed origins (e.g., `"https://bingo.example.com"`). If unset, common localhost origins are used outside production. Production requires an explicit list and rejects `"*"`.
 - `CORS_ALLOW_CREDENTIALS` - Allow credentials (default: `"true"`). Automatically forced to `false` if `CORS_ORIGINS` is `"*"`, since browsers reject a wildcard origin combined with credentials.
-- `ADMIN_API_KEY` (or `ADMIN_SECRET`) - Optional shared secret. If set, privileged endpoints (`POST /games/{id}/start`, `POST /games/{id}/draw`, `POST /games/{id}/stage/{n}`, `POST /cards/batch`, `GET /games/{id}/cards`) require it via either the `X-Admin-Key` header or an `Authorization: Bearer <key>` header. If unset, these endpoints remain open, matching the trusted/private-install deployment model. Read-only game state and `POST /validate` never require it. The admin dashboard has an "Admin Key" field (stored locally in the browser) that sends this header automatically once entered.
-- `ENVIRONMENT` - Set to `"production"` to disable `/docs`, `/redoc`, and `/openapi.json` by default. Override either way with `ENABLE_DOCS`.
+- `ADMIN_API_KEY` (or legacy `ADMIN_SECRET`) - Optional shared secret for privileged API access via `X-Admin-Key` or `Authorization: Bearer <key>`. Account sessions with an `OPERATOR` or `ADMIN` role also authorize these operations. Open bootstrap access is available only outside production when no key or accounts exist.
+- `INITIAL_ADMIN_TOKEN` - In production, required as the `X-Bootstrap-Token` header when creating the first account. Keep it secret and remove/rotate it after creating the administrator.
+- `ALLOW_REGISTRATION` - Enables new account registration after the first account exists. Defaults to `true` outside production and `false` in production.
+- `ENVIRONMENT` - Set to `"production"` to disable `/docs`, `/redoc`, and `/openapi.json` by default, require explicit CORS origins, disable open bootstrap, and require the initial-admin token. Override docs exposure with `ENABLE_DOCS`.
 - `CARD_DB_PATH` - Where the persistent card store's SQLite file lives (default: `data/cards.db`, relative to the backend's working directory; the Docker image mounts a volume at `/app/data`). Set to `:memory:` for a fully in-process, non-persistent store (used automatically by the test suite). Games (drawn numbers, mode, stage) always remain in-memory only. Cards are ephemeral by default (in-memory, cleared on restart) unless a generation request explicitly opts in with `"persistent": true` — see [Card Persistence](#card-persistence) below.
 - `MAX_GAMES` - Maximum number of concurrent games kept in memory before the oldest is evicted (default: `100`).
 - `MAX_MEMORY_CARDS` - Maximum number of ephemeral (non-persistent) cards kept in memory before the oldest is evicted (default: `25000`).
@@ -552,8 +558,8 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 <details>
 <summary><strong>Frontend Configuration</strong></summary>
 
-Runtime configuration via `config.js`:
-- `apiBaseUrl` - Backend API URL (default: `"/"`)
+Runtime configuration via `config.js` (or container environment variables):
+- `apiBaseUrl` / `API_BASE_URL` - Backend API URL (default: `"http://localhost:8000"`)
 - `wsBaseUrl` - WebSocket URL (default: `"ws://localhost:8000/ws"`)
 - `pollInterval` - Polling interval in ms (default: `20000`)
 - `cardFetchInterval` - Card refresh interval in ms (default: `300000`)

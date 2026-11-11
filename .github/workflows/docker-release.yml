@@ -1,5 +1,4 @@
 ---
-
 name: Build and Publish Backend + Frontend Images
 
 on:
@@ -19,6 +18,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must use the vMAJOR.MINOR.PATCH format."
+            exit 1
+          fi
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -28,6 +35,7 @@ jobs:
 
       - name: Set image names
         run: |
+          echo "IMAGE_SHA_TAG=sha-${GITHUB_SHA:0:12}" >> $GITHUB_ENV
           if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
             echo "BACKEND_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-backend:dev" >> $GITHUB_ENV
             echo "FRONTEND_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-frontend:dev" >> $GITHUB_ENV
@@ -41,30 +49,32 @@ jobs:
 
       - name: Build backend Docker image
         run: |
-          if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
-            docker build -f backend/Dockerfile -t $BACKEND_IMAGE .
-          else
-            docker build -f backend/Dockerfile -t $BACKEND_IMAGE -t $BACKEND_IMAGE_LATEST .
+          backend_tags=(-t "$BACKEND_IMAGE" -t "ghcr.io/${GITHUB_REPOSITORY,,}-backend:${IMAGE_SHA_TAG}")
+          if [[ -n "${BACKEND_IMAGE_LATEST:-}" ]]; then
+            backend_tags+=(-t "$BACKEND_IMAGE_LATEST")
           fi
+          docker build -f backend/Dockerfile "${backend_tags[@]}" .
 
       - name: Push backend Docker image
         run: |
-          docker push $BACKEND_IMAGE
-          if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
-            docker push $BACKEND_IMAGE_LATEST
+          docker push "$BACKEND_IMAGE"
+          docker push "ghcr.io/${GITHUB_REPOSITORY,,}-backend:${IMAGE_SHA_TAG}"
+          if [[ -n "${BACKEND_IMAGE_LATEST:-}" ]]; then
+            docker push "$BACKEND_IMAGE_LATEST"
           fi
 
       - name: Build frontend Docker image
         run: |
-          if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
-            docker build -f frontend/Dockerfile -t $FRONTEND_IMAGE .
-          else
-            docker build -f frontend/Dockerfile -t $FRONTEND_IMAGE -t $FRONTEND_IMAGE_LATEST .
+          frontend_tags=(-t "$FRONTEND_IMAGE" -t "ghcr.io/${GITHUB_REPOSITORY,,}-frontend:${IMAGE_SHA_TAG}")
+          if [[ -n "${FRONTEND_IMAGE_LATEST:-}" ]]; then
+            frontend_tags+=(-t "$FRONTEND_IMAGE_LATEST")
           fi
+          docker build -f frontend/Dockerfile "${frontend_tags[@]}" .
 
       - name: Push frontend Docker image
         run: |
-          docker push $FRONTEND_IMAGE
-          if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
-            docker push $FRONTEND_IMAGE_LATEST
+          docker push "$FRONTEND_IMAGE"
+          docker push "ghcr.io/${GITHUB_REPOSITORY,,}-frontend:${IMAGE_SHA_TAG}"
+          if [[ -n "${FRONTEND_IMAGE_LATEST:-}" ]]; then
+            docker push "$FRONTEND_IMAGE_LATEST"
           fi
