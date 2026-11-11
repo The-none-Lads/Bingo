@@ -661,21 +661,13 @@ const BingoApp = () => {
   // Display View - Casino Style with 5-Ball History
   if (view === 'display') {
     return (
-      <div className="min-h-screen bg-black text-white p-8 relative overflow-hidden">
+      <div className="min-h-screen bg-gradient-to-br from-emerald-950 via-green-950 to-emerald-900 text-white p-8 relative overflow-hidden">
+        <div aria-hidden="true" className="casino-background-pattern" />
+
         {/* Connection Status Indicator */}
         <div className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-full border border-gray-700">
           <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
           <span className="text-xs text-gray-300">{wsConnected ? 'Live' : 'Polling'}</span>
-        </div>
-
-        {/* Casino Background Pattern */}
-        <div className="absolute inset-0 opacity-10 pointer-events-none">
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,215,0,0.3) 35px, rgba(255,215,0,0.3) 70px)`
-            }}
-          ></div>
         </div>
 
         <canvas ref={confettiRef} className="fixed inset-0 pointer-events-none z-50" />
@@ -683,17 +675,36 @@ const BingoApp = () => {
         <div className="max-w-7xl mx-auto relative z-10">
           {/* Header with Neon Effect */}
           <div className="flex justify-between items-center mb-12">
-            <div className="relative">
-              <h1
-                className="text-8xl font-bold tracking-wider"
+            <div className="relative isolate">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -inset-x-4 -inset-y-4 z-0 rounded-full"
                 style={{
-                  textShadow: '0 0 20px #ff0080, 0 0 40px #ff0080, 0 0 60px #ff0080',
-                  color: '#ffed4e'
+                  background: 'radial-gradient(ellipse at center, rgba(16, 97, 61, 0.5) 0%, rgba(202, 138, 4, 0.1) 48%, transparent 78%)'
                 }}
+              />
+              <h1
+                className="relative z-10 text-8xl font-bold tracking-wider"
               >
-                BINGO
+                <span
+                  style={{
+                    display: 'inline-block',
+                    color: 'transparent',
+                    backgroundImage: 'linear-gradient(180deg, #fff1bd 0%, #ffd65a 42%, #f5a623 78%, #d8921e 100%)',
+                    WebkitBackgroundClip: 'text',
+                    backgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    textShadow: '0 1px 1px rgba(8, 45, 28, 0.55), 0 0 6px rgba(234, 179, 8, 0.28)'
+                  }}
+                >
+                  BINGO
+                </span>
               </h1>
-              <div className="absolute -bottom-2 left-0 right-0 h-1 bg-gradient-to-r from-red-500 via-yellow-500 to-purple-500 rounded"></div>
+              <div
+                aria-hidden="true"
+                className="absolute -bottom-2 left-0 right-0 z-10 h-1 rounded bg-gradient-to-r from-amber-600 via-yellow-300 to-amber-600 opacity-90"
+                style={{ boxShadow: '0 0 6px rgba(234, 179, 8, 0.35)' }}
+              />
             </div>
             <div className="flex items-center gap-3">
               <input
@@ -937,11 +948,12 @@ const BingoApp = () => {
 
   // Host Game Controls View (view === 'admin' or fallback)
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen relative bg-gradient-to-br from-emerald-950 via-green-950 to-emerald-900 p-8">
+      <div aria-hidden="true" className="casino-background-pattern" />
+      <div className="max-w-7xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
           <div className="flex items-center gap-4">
-            <h1 className="text-4xl font-bold text-gray-900">Host Game Controls</h1>
+            <h1 className="text-4xl font-bold text-white">Host Game Controls</h1>
             <div
               className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
                 wsConnected ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
@@ -966,7 +978,7 @@ const BingoApp = () => {
             )}
             <button
               onClick={() => setView('player')}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-gray-700 text-sm font-medium"
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-white text-sm font-medium"
               title="Open Player View"
             >
               <Users className="w-4 h-4" />
@@ -974,7 +986,7 @@ const BingoApp = () => {
             </button>
             <button
               onClick={() => setIsAuthModalOpen(true)}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-gray-700 text-sm font-medium"
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all flex items-center gap-2 text-white text-sm font-medium"
               title={currentUser ? `Signed in as ${currentUser.username} (${currentUser.role})` : 'Sign In'}
             >
               <User className="w-4 h-4" />

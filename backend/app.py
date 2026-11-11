@@ -4,6 +4,7 @@ import os
 import re
 import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from auth.config import allow_open_bootstrap, get_admin_api_key, is_production
@@ -32,6 +33,8 @@ from models import (
     CardBatchRequest,
     CardResponse,
     CreateGameRequest,
+    GameSettingsRequest,
+    GameSettingsResponse,
     GameStateResponse,
     ValidateRequest,
     ValidateResponse,
@@ -62,9 +65,11 @@ def is_docs_enabled() -> bool:
 async def lifespan(app: FastAPI):
     """Application lifespan managing database initialization and cleanup."""
     await init_db()
+    app.state.expiration_task = asyncio.create_task(_expire_inactive_games_loop())
     try:
         yield
     finally:
+        app.state.expiration_task.cancel()
         await close_db()
 
 
@@ -83,6 +88,38 @@ async def health_check(
 ) -> dict[str, str]:
     await db_session.execute(select(1))
     return {"status": "ok"}
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _normalize_game_state(game_id: str) -> dict:
+    game = db.games.get(game_id)
+    if not game:
+        return {}
+    return {
+        "game_id": game_id,
+        "drawn": list(game["drawn"]),
+        "mode": game["mode"],
+        "stage": game["stage"],
+        "status": game["status"],
+        "access_policy": game.get("access_policy", "LINK_ONLY"),
+        "last_activity_at": game.get("last_activity_at"),
+    }
+
+
+async def _expire_inactive_games_loop() -> None:
+    while True:
+        try:
+            expired = db.expire_inactive_games(now=_utc_now())
+            for game_id in expired:
+                await broadcast_game_state(game_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive loop safety
+            logger.exception("Inactive game expiry check failed: %s", exc)
+        await asyncio.sleep(30)
 
 
 # Configuration from environment variables
@@ -225,7 +262,11 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
             await websocket.close(code=1008, reason="Origin not allowed")
             return
 
+    db.expire_inactive_games(now=_utc_now())
     game = db.games.get(game_id)
+    if game and game.get("status") != "active":
+        await websocket.close(code=1008, reason="This game is no longer active")
+        return
     policy = game.get("access_policy", "LINK_ONLY") if game else "LINK_ONLY"
 
     if policy != "PUBLIC":
@@ -287,14 +328,7 @@ async def broadcast_game_state(game_id: str):
     game = db.games.get(game_id)
     if not game:
         return
-    state = {
-        "game_id": game_id,
-        "drawn": list(game["drawn"]),
-        "mode": game["mode"],
-        "stage": game["stage"],
-        "status": game["status"],
-        "access_policy": game.get("access_policy", "LINK_ONLY"),
-    }
+    state = _normalize_game_state(game_id)
     await manager.broadcast(game_id, {"type": "state_update", "state": state})
 
 
@@ -309,6 +343,8 @@ async def start_game(
     game_id: str = Path(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$"),
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
+    db.expire_inactive_games(now=_utc_now())
+
     # Enforce per-user active games quota
     if current_user:
         from auth.quotas import check_active_games_quota
@@ -319,7 +355,21 @@ async def start_game(
         if current_user and existing_game:
             assert_resource_access(current_user, existing_game.get("owner_id"))
 
+        active_count = db.count_active_games()
+        if existing_game is None and active_count >= db.max_concurrent_games:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Concurrent game limit reached: {db.max_concurrent_games}. "
+                    "Stop or expire an existing game before creating a new one."
+                ),
+            )
+
+        if existing_game and existing_game.get("status") not in {"active"}:
+            raise HTTPException(status_code=409, detail="Game is not active and cannot be restarted")
+
         engine = DrawEngine(max_number=req.ball_set)
+        now = _utc_now()
         game_data = {
             "engine": engine,
             "drawn": engine.drawn,
@@ -329,6 +379,8 @@ async def start_game(
             "status": "active",
             "access_policy": getattr(req, "access_policy", "LINK_ONLY") or "LINK_ONLY",
             "owner_id": current_user.id if current_user else None,
+            "created_at": now.isoformat(),
+            "last_activity_at": now.isoformat(),
         }
         db.set_game(game_id, game_data)
         await broadcast_game_state(game_id)
@@ -345,9 +397,12 @@ async def set_stage(
         game = db.games.get(game_id)
         if not game:
             raise HTTPException(status_code=404, detail="Game not found")
+        if game.get("status") != "active":
+            raise HTTPException(status_code=409, detail="Game is not active")
         if current_user:
             assert_resource_access(current_user, game.get("owner_id"))
         game["stage"] = required_rows
+        game["last_activity_at"] = _utc_now().isoformat()
         await broadcast_game_state(game_id)
         return {"game_id": game_id, "stage": required_rows}
 
@@ -358,17 +413,25 @@ async def draw_number(
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
     async with db.get_lock(game_id):
+        db.expire_inactive_games(now=_utc_now())
         game = db.games.get(game_id)
         if not game:
             raise HTTPException(status_code=404, detail="Game not found")
+        if game.get("status") != "active":
+            raise HTTPException(status_code=409, detail="Game is not active")
         if current_user:
             assert_resource_access(current_user, game.get("owner_id"))
         num = game["engine"].draw()
         if num is None:
             game["status"] = "finished"
+            game["ended_reason"] = "exhausted"
+            game["ended_at"] = _utc_now().isoformat()
+            game["last_activity_at"] = game["ended_at"]
+            await broadcast_game_state(game_id)
             raise HTTPException(status_code=400, detail="No numbers left")
         # update state
         game["drawn"] = list(game["engine"].drawn)
+        game["last_activity_at"] = _utc_now().isoformat()
         # broadcast
         await broadcast_game_state(game_id)
         return {"drawn_number": num, "all_drawn": game["drawn"]}
@@ -383,6 +446,7 @@ async def game_state(
     authorization: Optional[str] = Header(None),
     db_session: AsyncSession = Depends(get_db_session),
 ):
+    db.expire_inactive_games(now=_utc_now())
     game = db.games.get(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
@@ -395,6 +459,7 @@ async def game_state(
         "stage": game["stage"],
         "status": game["status"],
         "access_policy": policy,
+        "last_activity_at": game.get("last_activity_at"),
     }
 
     if policy == "PUBLIC":
@@ -452,6 +517,12 @@ async def generate_cards(
     req: CardBatchRequest,
     current_user: Optional[User] = Depends(require_operator_with_bootstrap),
 ):
+    if req.game_id:
+        db.expire_inactive_games(now=_utc_now())
+        target_game = db.games.get(req.game_id)
+        if target_game and target_game.get("status") != "active":
+            raise HTTPException(status_code=409, detail="Game is not active")
+
     # Enforce per-user persistent cards quota if persistence was requested
     if req.persistent and current_user:
         from auth.quotas import check_persistent_cards_quota
@@ -500,6 +571,9 @@ async def generate_cards(
             }
         )
     if req.game_id:
+        game = db.games.get(req.game_id)
+        if game:
+            game["last_activity_at"] = _utc_now().isoformat()
         await broadcast_game_state(req.game_id)
     return {"count": len(cards), "persistent": req.persistent, "cards": cards}
 

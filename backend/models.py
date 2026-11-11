@@ -37,6 +37,19 @@ class GameStateResponse(BaseModel):
     stage: int
     status: str
     access_policy: Optional[str] = "LINK_ONLY"
+    last_activity_at: Optional[str] = None
+
+
+class GameSettingsRequest(BaseModel):
+    max_concurrent_games: int = Field(..., ge=1, le=200)
+    inactivity_timeout_minutes: int = Field(..., ge=30, le=60)
+
+
+class GameSettingsResponse(BaseModel):
+    max_concurrent_games: int
+    inactivity_timeout_minutes: int
+    active_games: int
+    available_capacity: int
 
 
 # --- Card-related schemas ---

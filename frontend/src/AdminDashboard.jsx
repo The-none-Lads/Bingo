@@ -8,6 +8,8 @@ export function AdminDashboard({ currentUser, onClose }) {
   const [activeTab, setActiveTab] = useState('users');
   const [users, setUsers] = useState([]);
   const [systemHealth, setSystemHealth] = useState(null);
+  const [gameList, setGameList] = useState([]);
+  const [gameSettings, setGameSettings] = useState({ max_concurrent_games: 5, inactivity_timeout_minutes: 45 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,19 +36,77 @@ export function AdminDashboard({ currentUser, onClose }) {
       if (!res.ok) throw new Error(`Failed to fetch health: ${res.status}`);
       const data = await res.json();
       setSystemHealth(data);
+      if (data.settings) {
+        setGameSettings({
+          max_concurrent_games: data.settings.max_concurrent_games,
+          inactivity_timeout_minutes: data.settings.inactivity_timeout_minutes,
+        });
+      }
     } catch (err) {
       setError(err.message);
     }
   }, []);
 
+  const fetchActiveGames = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/games`, { credentials: 'include' });
+      if (!res.ok) throw new Error(`Failed to fetch active games: ${res.status}`);
+      const data = await res.json();
+      setGameList(data.active_games || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, []);
+
+  const stopGame = async (gameId) => {
+    if (!confirm(`Stop game ${gameId}? This will end the game immediately.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/admin/games/${gameId}/stop`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Failed to stop game');
+      }
+      await Promise.all([fetchSystemHealth(), fetchActiveGames()]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const updateGameSettings = async (nextSettings) => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(nextSettings)
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Failed to update settings');
+      }
+      const data = await res.json();
+      setGameSettings({
+        max_concurrent_games: data.max_concurrent_games,
+        inactivity_timeout_minutes: data.inactivity_timeout_minutes,
+      });
+      await fetchSystemHealth();
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   useEffect(() => {
     const loadAll = async () => {
       setLoading(true);
-      await Promise.all([fetchUsers(), fetchSystemHealth()]);
+      await Promise.all([fetchUsers(), fetchSystemHealth(), fetchActiveGames()]);
       setLoading(false);
     };
     loadAll();
-  }, [fetchUsers, fetchSystemHealth]);
+  }, [fetchUsers, fetchSystemHealth, fetchActiveGames]);
 
   const updateUserRole = async (userId, newRole) => {
     try {
@@ -131,16 +191,19 @@ export function AdminDashboard({ currentUser, onClose }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
+      <div className="min-h-screen relative bg-gradient-to-br from-emerald-950 via-green-950 to-emerald-900 flex items-center justify-center">
+        <div aria-hidden="true" className="casino-background-pattern" />
+        <div className="relative z-10 animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen relative bg-gradient-to-br from-emerald-950 via-green-950 to-emerald-900">
+      <div aria-hidden="true" className="casino-background-pattern" />
+
       {/* Header */}
-      <div className="bg-white border-b shadow-sm">
+      <div className="relative z-10 bg-white border-b shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
@@ -162,7 +225,7 @@ export function AdminDashboard({ currentUser, onClose }) {
 
       {/* Error Banner */}
       {error && (
-        <div className="max-w-7xl mx-auto px-6 mt-4">
+        <div className="relative z-10 max-w-7xl mx-auto px-6 mt-4">
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
             <XCircle className="w-5 h-5 text-red-500" />
             <span className="text-red-700">{error}</span>
@@ -174,7 +237,7 @@ export function AdminDashboard({ currentUser, onClose }) {
       )}
 
       {/* Tabs */}
-      <div className="max-w-7xl mx-auto px-6 mt-6">
+      <div className="relative z-10 max-w-7xl mx-auto px-6 mt-6">
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
           <button
             onClick={() => setActiveTab('users')}
@@ -198,7 +261,7 @@ export function AdminDashboard({ currentUser, onClose }) {
       </div>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-6">
+      <div className="relative z-10 max-w-7xl mx-auto px-6 py-6">
         {activeTab === 'users' && (
           <div className="space-y-4">
             {/* Search and Actions */}
@@ -446,6 +509,69 @@ export function AdminDashboard({ currentUser, onClose }) {
                   Refresh Stats
                 </button>
               </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Game Management</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Maximum concurrent games</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="200"
+                    value={gameSettings.max_concurrent_games}
+                    onChange={(e) => setGameSettings((prev) => ({ ...prev, max_concurrent_games: Number(e.target.value) }))}
+                    className="w-full border rounded-lg px-3 py-2 text-gray-900 focus:ring-2 focus:ring-purple-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Inactivity timeout (minutes)</label>
+                  <input
+                    type="number"
+                    min="30"
+                    max="60"
+                    value={gameSettings.inactivity_timeout_minutes}
+                    onChange={(e) => setGameSettings((prev) => ({ ...prev, inactivity_timeout_minutes: Number(e.target.value) }))}
+                    className="w-full border rounded-lg px-3 py-2 text-gray-900 focus:ring-2 focus:ring-purple-500 outline-none"
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex items-center justify-between gap-3">
+                <div className="text-sm text-gray-600">
+                  Active games: {systemHealth.games.active} / {gameSettings.max_concurrent_games}
+                </div>
+                <button
+                  onClick={() => updateGameSettings(gameSettings)}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all text-sm font-medium"
+                >
+                  Save Settings
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Active Games</h3>
+              {gameList.length === 0 ? (
+                <p className="text-sm text-gray-500">No active games.</p>
+              ) : (
+                <div className="space-y-3">
+                  {gameList.map((game) => (
+                    <div key={game.game_id} className="flex items-center justify-between rounded-lg border border-gray-200 p-3 bg-gray-50">
+                      <div>
+                        <div className="font-medium text-gray-900">{game.game_id}</div>
+                        <div className="text-xs text-gray-500">{game.mode} • stage {game.stage} • {game.drawn_count} drawn</div>
+                      </div>
+                      <button
+                        onClick={() => stopGame(game.game_id)}
+                        className="px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-sm font-medium hover:bg-red-100"
+                      >
+                        Stop Game
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* System Resources */}

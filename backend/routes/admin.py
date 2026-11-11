@@ -11,7 +11,14 @@ from auth.rbac import require_admin
 from database import get_db_session
 from db_models import User, UserAuthMethod, UserSession
 from fastapi import APIRouter, Depends, HTTPException, Query
-from models import MessageResponse, UserAdminResponse, UserQuotaInfo, UserUpdateRequest
+from models import (
+    GameSettingsRequest,
+    GameSettingsResponse,
+    MessageResponse,
+    UserAdminResponse,
+    UserQuotaInfo,
+    UserUpdateRequest,
+)
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from storage.db import db
@@ -310,6 +317,101 @@ async def get_user_quotas(
     )
 
 
+@router.get("/games", summary="List active games and admin settings")
+async def list_active_games(
+    current_admin: User = Depends(require_admin),
+):
+    """List currently active games alongside game-management settings."""
+    active_games = []
+    for game_id, game in sorted(db.games.items()):
+        if game.get("status") != "active":
+            continue
+        last_activity = game.get("last_activity_at")
+        try:
+            if last_activity:
+                last_activity_dt = datetime.fromisoformat(last_activity)
+                if last_activity_dt.tzinfo is None:
+                    last_activity_dt = last_activity_dt.replace(tzinfo=timezone.utc)
+            else:
+                last_activity_dt = None
+        except ValueError:
+            last_activity_dt = None
+        active_games.append(
+            {
+                "game_id": game_id,
+                "mode": game.get("mode"),
+                "status": game.get("status"),
+                "stage": game.get("stage"),
+                "drawn_count": len(game.get("drawn", [])),
+                "last_activity_at": last_activity_dt.isoformat() if last_activity_dt else None,
+                "owner_id": game.get("owner_id"),
+            }
+        )
+
+    return {
+        "active_games": active_games,
+        "max_concurrent_games": db.max_concurrent_games,
+        "inactivity_timeout_minutes": db.inactivity_timeout_minutes,
+        "active_game_count": len(active_games),
+        "available_capacity": max(0, db.max_concurrent_games - len(active_games)),
+    }
+
+
+@router.get("/settings", response_model=GameSettingsResponse, summary="Get game settings")
+async def get_game_settings(
+    current_admin: User = Depends(require_admin),
+):
+    """Return the current game-management settings."""
+    active_games = db.count_active_games()
+    return GameSettingsResponse(
+        max_concurrent_games=db.max_concurrent_games,
+        inactivity_timeout_minutes=db.inactivity_timeout_minutes,
+        active_games=active_games,
+        available_capacity=max(0, db.max_concurrent_games - active_games),
+    )
+
+
+@router.patch("/settings", response_model=GameSettingsResponse, summary="Update game settings")
+async def update_game_settings(
+    req: GameSettingsRequest,
+    current_admin: User = Depends(require_admin),
+):
+    """Persist the instance-wide game-management settings."""
+    if req.max_concurrent_games < 1 or req.max_concurrent_games > 200:
+        raise HTTPException(status_code=400, detail="max_concurrent_games must be between 1 and 200")
+    if req.inactivity_timeout_minutes < 30 or req.inactivity_timeout_minutes > 60:
+        raise HTTPException(status_code=400, detail="inactivity_timeout_minutes must be between 30 and 60")
+
+    db.max_concurrent_games = req.max_concurrent_games
+    db.inactivity_timeout_minutes = req.inactivity_timeout_minutes
+    db.save_settings()
+    active_games = db.count_active_games()
+    return GameSettingsResponse(
+        max_concurrent_games=db.max_concurrent_games,
+        inactivity_timeout_minutes=db.inactivity_timeout_minutes,
+        active_games=active_games,
+        available_capacity=max(0, db.max_concurrent_games - active_games),
+    )
+
+
+@router.post("/games/{game_id}/stop", response_model=MessageResponse, summary="Stop an active game")
+async def stop_game(
+    game_id: str,
+    current_admin: User = Depends(require_admin),
+):
+    """Stop a game and release the active-game slot."""
+    game = db.games.get(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if game.get("status") in {"stopped", "expired", "finished", "completed"}:
+        return MessageResponse(message=f"Game {game_id} is already closed")
+
+    db.mark_game_terminal(game_id, status="stopped", reason="manual_stop", now=datetime.now(timezone.utc))
+    from app import broadcast_game_state
+    await broadcast_game_state(game_id)
+    return MessageResponse(message=f"Game {game_id} stopped")
+
+
 @router.get("/system/health", summary="System health overview")
 async def system_health(
     current_admin: User = Depends(require_admin),
@@ -338,15 +440,21 @@ async def system_health(
         )
     ).scalar_one()
 
+    active_game_count = db.count_active_games()
     return {
         "users": {
             "total": total_users,
             "active": active_users,
         },
         "games": {
-            "active": sum(1 for g in db.games.values() if g.get("status") == "active"),
+            "active": active_game_count,
             "total": len(db.games),
-            "max": db.max_games,
+            "max": db.max_concurrent_games,
+            "available_capacity": max(0, db.max_concurrent_games - active_game_count),
+        },
+        "settings": {
+            "max_concurrent_games": db.max_concurrent_games,
+            "inactivity_timeout_minutes": db.inactivity_timeout_minutes,
         },
         "cards": {
             "ephemeral": len(db.cards._memory) if hasattr(db.cards, '_memory') else 0,
