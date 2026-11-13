@@ -37,7 +37,11 @@ from models import (
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(
+    prefix="/auth",
+    tags=["Authentication"],
+    dependencies=[Depends(verify_csrf_token)],
+)
 
 
 def is_registration_allowed() -> bool:

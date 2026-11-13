@@ -454,6 +454,10 @@ class MemoryDB:
         game["last_activity_at"] = game["ended_at"]
         return True
 
+    def remove_game(self, game_id: str) -> Optional[Dict[str, Any]]:
+        """Remove a game and release its ID while retaining its lock for safe reuse."""
+        return self.games.pop(game_id, None)
+
     def expire_inactive_games(self, *, now: Optional[datetime] = None) -> list[str]:
         current_time = now or datetime.now(timezone.utc)
         expired: list[str] = []
@@ -467,8 +471,8 @@ class MemoryDB:
                 if last_activity is None:
                     last_activity = current_time
             if current_time - last_activity > timedelta(minutes=self.inactivity_timeout_minutes):
-                if self.mark_game_terminal(game_id, status="expired", reason="inactivity", now=current_time):
-                    expired.append(game_id)
+                expired.append(game_id)
+                self.remove_game(game_id)
         return expired
 
     def get_game_owner(self, game_id: str) -> Optional[str]:
