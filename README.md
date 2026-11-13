@@ -175,6 +175,8 @@ For detailed testing documentation, see [backend/tests/README.md](backend/tests/
 
 Images are automatically built and pushed to GHCR on version tags or the `dev` tag via GitHub Actions:
 
+Pushing a `vMAJOR.MINOR.PATCH` version tag for a commit on `main` also merges the latest `main` into the `bingo.gameserver1.cc` deployment branch.
+
 ```bash
 # Tag a new version
 git tag -a v1.0.0 -m "Release version 1.0.0"
@@ -416,6 +418,9 @@ The project uses GitHub Actions for automated testing and deployment.
    - Builds and pushes backend and frontend images to GHCR
    - Tags images with version number and `latest` (for releases)
    - Rolling `dev` tag for development builds
+
+4. **Game Server Branch Sync** (`.github/workflows/sync-main-to-gameserver.yml`)
+   - On valid version tags, merges `main` into `bingo.gameserver1.cc` when the tagged commit is on `main`
 </details>
 
 ## 🤝 Contributing
