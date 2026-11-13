@@ -16,4 +16,4 @@ isort>=5.12.0
 yamllint>=1.26.0
 
 # Development
-ipython>=8.14.0
+ipython>=9.18.1
