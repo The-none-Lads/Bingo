@@ -1278,7 +1278,9 @@ const BingoApp = () => {
                   <p className="text-xs text-gray-600 mt-0.5">
                     When enabled, generated cards are saved to the persistent database and remain
                     available after server restarts. Otherwise, cards are kept in memory and are
-                    cleared when the server restarts.
+                    cleared when the server restarts. Cards are still available across games without 
+                    saving them to the database. However, if a new release is pushed or the app is 
+                    re-deployed they will get reset since they are saved in memory.
                   </p>
                 </label>
               </div>

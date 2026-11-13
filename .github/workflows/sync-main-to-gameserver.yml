@@ -1,0 +1,48 @@
+name: Sync main to game server
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-main-to-bingo.gameserver1.cc
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge main into bingo.gameserver1.cc
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge main into game server branch
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version tags must use the vMAJOR.MINOR.PATCH format."
+            exit 1
+          fi
+
+          git fetch origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/heads/bingo.gameserver1.cc:refs/remotes/origin/bingo.gameserver1.cc
+
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::notice::Tag is not on main; skipping branch sync."
+            exit 0
+          fi
+
+          git switch --create bingo.gameserver1.cc \
+            --track origin/bingo.gameserver1.cc
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-edit origin/main
+          git push origin \
+            HEAD:refs/heads/bingo.gameserver1.cc

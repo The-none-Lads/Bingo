@@ -255,7 +255,10 @@ class TestAdminGameLifecycle:
         db.max_concurrent_games = 1
         db.save_settings()
 
-        with TestClient(app) as client:
+        with TestClient(
+            app,
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             register = client.post(
                 "/auth/register",
                 json={"username": "adminstop", "email": "adminstop@test.com", "password": "SuperSecretPassword123!"},
@@ -279,11 +282,11 @@ class TestAdminGameLifecycle:
             assert stop.json()["message"] == "Game stop_game stopped"
 
             state = client.get("/games/stop_game/state")
-            assert state.status_code == 200
-            assert state.json()["status"] == "stopped"
+            assert state.status_code == 404
+            assert "stop_game" not in db.games
 
             second = client.post(
-                "/games/next_game/start",
+                "/games/stop_game/start",
                 json={"mode": "regular", "ball_set": 75, "stage": 1, "access_policy": "PUBLIC"},
             )
             assert second.status_code == 200
@@ -304,6 +307,19 @@ class TestAdminGameLifecycle:
             )
             assert response.status_code == 409
             assert "Concurrent game limit reached" in response.json()["detail"]
+
+    def test_reusing_closed_game_id_still_obeys_concurrent_limit(self, client):
+        db.max_concurrent_games = 1
+        db.set_game("active_game", {"status": "active", "drawn": []})
+        db.set_game("closed_game", {"status": "expired", "drawn": []})
+
+        response = client.post(
+            "/games/closed_game/start",
+            json={"mode": "regular", "ball_set": 75, "stage": 1},
+        )
+
+        assert response.status_code == 409
+        assert "Concurrent game limit reached" in response.json()["detail"]
 
     def test_inactivity_expiration_marks_game_expired(self):
         db.games.clear()
@@ -328,8 +344,35 @@ class TestAdminGameLifecycle:
 
         expired = db.expire_inactive_games(now=now)
         assert expired == ["idle_game"]
-        assert db.games["idle_game"]["status"] == "expired"
+        assert "idle_game" not in db.games
         assert db.count_active_games() == 0
+
+    def test_expired_game_can_be_restarted_with_same_id(self, client):
+        db.inactivity_timeout_minutes = 30
+        now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+        old = (now - __import__("datetime").timedelta(minutes=31)).isoformat()
+        db.set_game(
+            "idle_game",
+            {
+                "engine": DrawEngine(max_number=75),
+                "drawn": [1, 2, 3],
+                "mode": "regular",
+                "stage": 1,
+                "ball_set": 75,
+                "status": "active",
+                "last_activity_at": old,
+            },
+        )
+
+        assert db.expire_inactive_games(now=now) == ["idle_game"]
+        response = client.post(
+            "/games/idle_game/start",
+            json={"mode": "regular", "ball_set": 75, "stage": 1, "access_policy": "PUBLIC"},
+        )
+
+        assert response.status_code == 200
+        assert db.games["idle_game"]["status"] == "active"
+        assert db.games["idle_game"]["drawn"] == []
 
 
 class TestCORS:

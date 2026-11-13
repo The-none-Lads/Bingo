@@ -9,6 +9,8 @@ Covers:
 - User self-service endpoints (/auth/my/games, /auth/quota)
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 import pytest_asyncio
 from app import app
@@ -36,6 +38,7 @@ async def reset_db_and_limiter():
 
 async def _register_user(client, username, email, password="SuperSecretPassword123!"):
     """Helper to register a user and return the response."""
+    client.headers["X-Requested-With"] = "XMLHttpRequest"
     resp = await client.post(
         "/auth/register",
         json={"username": username, "email": email, "password": password},
@@ -45,6 +48,7 @@ async def _register_user(client, username, email, password="SuperSecretPassword1
 
 async def _login_user(client, username, password="SuperSecretPassword123!"):
     """Helper to login and return the response."""
+    client.headers["X-Requested-With"] = "XMLHttpRequest"
     resp = await client.post(
         "/auth/login",
         json={"username": username, "password": password},
@@ -336,6 +340,81 @@ class TestUserQuotas:
 
 class TestAdminUserManagement:
     """Test admin user management endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_admin_stopped_game_id_can_be_claimed_by_another_operator(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            admin = await _register_user(client, "admin1", "admin1@test.com")
+            operator = await _register_user(client, "operator1", "operator1@test.com")
+            db.set_game(
+                "released_game",
+                {
+                    "status": "active",
+                    "owner_id": admin.json()["id"],
+                    "drawn": [],
+                    "mode": "regular",
+                    "stage": 1,
+                },
+            )
+
+            await _login_user(client, "admin1")
+            stopped = await client.post("/admin/games/released_game/stop")
+            assert stopped.status_code == 200
+            assert "released_game" not in db.games
+
+            await _login_user(client, "operator1")
+            restarted = await client.post(
+                "/games/released_game/start",
+                json={"mode": "regular", "ball_set": 75, "stage": 1},
+            )
+
+            assert restarted.status_code == 200
+            assert db.games["released_game"]["owner_id"] == operator.json()["id"]
+
+    @pytest.mark.asyncio
+    async def test_inactive_game_id_can_be_claimed_by_another_operator(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            admin = await _register_user(client, "admin1", "admin1@test.com")
+            operator = await _register_user(client, "operator1", "operator1@test.com")
+            old_activity = (
+                datetime.now(timezone.utc) - timedelta(minutes=db.inactivity_timeout_minutes + 1)
+            ).isoformat()
+            db.set_game(
+                "expired_game",
+                {
+                    "status": "active",
+                    "owner_id": admin.json()["id"],
+                    "drawn": [],
+                    "mode": "regular",
+                    "stage": 1,
+                    "last_activity_at": old_activity,
+                },
+            )
+
+            restarted = await client.post(
+                "/games/expired_game/start",
+                json={"mode": "regular", "ball_set": 75, "stage": 1},
+            )
+
+            assert restarted.status_code == 200
+            assert db.games["expired_game"]["owner_id"] == operator.json()["id"]
+
+    @pytest.mark.asyncio
+    async def test_admin_game_list_includes_active_games_from_all_owners(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            admin = await _register_user(client, "admin1", "admin1@test.com")
+            admin_id = admin.json()["id"]
+            db.set_game("admin_game", {"status": "active", "owner_id": admin_id, "drawn": []})
+            db.set_game("other_owner_game", {"status": "active", "owner_id": "another-user", "drawn": []})
+            db.set_game("expired_game", {"status": "expired", "owner_id": "another-user", "drawn": []})
+
+            response = await client.get("/admin/games")
+
+            assert response.status_code == 200
+            assert {game["game_id"] for game in response.json()["active_games"]} == {
+                "admin_game",
+                "other_owner_game",
+            }
 
     @pytest.mark.asyncio
     async def test_admin_can_promote_user_to_operator(self):

@@ -265,11 +265,11 @@ class TestAuthoritativeDrawIntegrityAndConcurrency:
             res = client.post("/games/small_game/draw")
             assert res.status_code == 200
 
-        # 4th draw exhausts numbers and sets status to finished
+        # 4th draw exhausts numbers and releases the game ID
         res_exhausted = client.post("/games/small_game/draw")
         assert res_exhausted.status_code == 400
-        state = client.get("/games/small_game/state").json()
-        assert state["status"] == "finished"
+        assert client.get("/games/small_game/state").status_code == 404
+        assert "small_game" not in db.games
 
 
 class TestCardIsolationAndCollisionProtection:

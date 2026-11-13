@@ -322,6 +322,9 @@ async def list_active_games(
     current_admin: User = Depends(require_admin),
 ):
     """List currently active games alongside game-management settings."""
+    from app import _expire_inactive_games
+
+    await _expire_inactive_games()
     active_games = []
     for game_id, game in sorted(db.games.items()):
         if game.get("status") != "active":
@@ -399,16 +402,20 @@ async def stop_game(
     game_id: str,
     current_admin: User = Depends(require_admin),
 ):
-    """Stop a game and release the active-game slot."""
-    game = db.games.get(game_id)
-    if not game:
-        raise HTTPException(status_code=404, detail="Game not found")
-    if game.get("status") in {"stopped", "expired", "finished", "completed"}:
-        return MessageResponse(message=f"Game {game_id} is already closed")
+    """Stop a game and release its ID."""
+    from app import broadcast_game_state, manager
 
-    db.mark_game_terminal(game_id, status="stopped", reason="manual_stop", now=datetime.now(timezone.utc))
-    from app import broadcast_game_state
-    await broadcast_game_state(game_id)
+    async with db.get_lock(game_id):
+        game = db.games.get(game_id)
+        if not game:
+            raise HTTPException(status_code=404, detail="Game not found")
+        if game.get("status") in {"stopped", "expired", "finished", "completed"}:
+            db.remove_game(game_id)
+        else:
+            db.mark_game_terminal(game_id, status="stopped", reason="manual_stop", now=datetime.now(timezone.utc))
+            await broadcast_game_state(game_id)
+            db.remove_game(game_id)
+        await manager.close_game_connections(game_id, "Game stopped by administrator")
     return MessageResponse(message=f"Game {game_id} stopped")
 
 

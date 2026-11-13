@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Activity, Database, Shield, Power, RotateCcw, Search, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import { Users, Activity, Database, Shield, Power, RotateCcw, Search, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, XCircle, Trash2 } from 'lucide-react';
 import { config } from './config';
 
 const API_BASE = config.apiBaseUrl;
@@ -141,6 +141,24 @@ export function AdminDashboard({ currentUser, onClose }) {
       }
       await fetchUsers();
       await fetchSystemHealth();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const deleteUser = async (user) => {
+    if (!window.confirm(`Permanently delete ${user.username}? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/admin/users/${user.id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Failed to delete user');
+      }
+      setExpandedUser(null);
+      await Promise.all([fetchUsers(), fetchSystemHealth()]);
     } catch (err) {
       setError(err.message);
     }
@@ -346,7 +364,7 @@ export function AdminDashboard({ currentUser, onClose }) {
                         {expandedUser === user.id && (
                           <tr>
                             <td colSpan="6" className="bg-gray-50 px-6 py-4">
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                                 {/* Role Management */}
                                 <div className="bg-white rounded-lg p-4 border">
                                   <h4 className="text-sm font-semibold text-gray-700 mb-3">Change Role</h4>
@@ -399,6 +417,22 @@ export function AdminDashboard({ currentUser, onClose }) {
                                     Revoke All Sessions
                                   </button>
                                   <p className="text-xs text-gray-400 mt-2">{user.session_count} active session(s)</p>
+                                </div>
+
+                                {/* Account Removal */}
+                                <div className="bg-white rounded-lg p-4 border border-red-100">
+                                  <h4 className="text-sm font-semibold text-gray-700 mb-3">Remove User</h4>
+                                  <button
+                                    onClick={() => deleteUser(user)}
+                                    disabled={user.id === currentUser?.id}
+                                    className="px-3 py-1.5 rounded text-xs font-medium bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Delete Account
+                                  </button>
+                                  <p className="text-xs text-gray-400 mt-2">
+                                    {user.id === currentUser?.id ? 'Cannot delete your own account' : 'Permanently removes this user'}
+                                  </p>
                                 </div>
                               </div>
 

@@ -30,7 +30,11 @@ class TestAuthAPI:
         bootstrap_token = "test-bootstrap-token-with-at-least-32-characters"
         monkeypatch.setenv("INITIAL_ADMIN_TOKEN", bootstrap_token)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             payload = {
                 "username": "secure_admin",
                 "email": "secure_admin@example.com",
@@ -48,7 +52,11 @@ class TestAuthAPI:
             assert created.json()["role"] == "ADMIN"
 
     async def test_first_user_becomes_admin_and_receives_cookie(self):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             # First registration -> ADMIN
             resp = await client.post(
                 "/auth/register",
@@ -78,7 +86,11 @@ class TestAuthAPI:
             assert resp2.json()["role"] == "OPERATOR"
 
     async def test_duplicate_registration_fails(self):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             await client.post(
                 "/auth/register",
                 json={
@@ -111,7 +123,11 @@ class TestAuthAPI:
             assert dup_email.status_code == 409
 
     async def test_login_with_username_or_email_and_get_me(self):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             # Register user
             await client.post(
                 "/auth/register",
@@ -162,7 +178,11 @@ class TestAuthAPI:
             assert login_email_resp.status_code == 200
 
     async def test_invalid_login_credentials(self):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             await client.post(
                 "/auth/register",
                 json={
@@ -195,7 +215,11 @@ class TestAuthAPI:
             assert resp_no_user.json()["detail"] == "Invalid credentials"
 
     async def test_logout_and_session_revocation(self):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             await client.post(
                 "/auth/register",
                 json={
@@ -216,7 +240,11 @@ class TestAuthAPI:
             assert (await client.get("/auth/me")).status_code == 401
 
     async def test_password_change_flow(self):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             await client.post(
                 "/auth/register",
                 json={
@@ -268,9 +296,29 @@ class TestAuthAPI:
             assert new_login.status_code == 200
 
     async def test_security_headers_present(self):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as client:
             resp = await client.get("/auth/status")
             assert resp.headers.get("X-Content-Type-Options") == "nosniff"
             assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
             assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
             assert "Content-Security-Policy" in resp.headers
+
+    async def test_cookie_authenticated_auth_route_requires_csrf_header(self):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            client.cookies.set("bingo_session", "some_session_token")
+
+            rejected = await client.post("/auth/logout")
+            assert rejected.status_code == 403
+
+            accepted = await client.post(
+                "/auth/logout",
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+            assert accepted.status_code == 200
