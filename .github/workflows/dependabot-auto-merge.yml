@@ -5,7 +5,6 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
-  actions: read
   contents: write
   pull-requests: write
 
@@ -27,72 +26,34 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Only patch and minor updates are eligible. Major updates stay manual.
-      - name: Wait for CI and merge
+      # GitHub's native auto-merge waits for the repository's required checks.
+      - name: Enable auto-merge after required checks
         if: >-
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor'
         uses: actions/github-script@v7
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |
-            const prNumber = Number(process.env.PR_NUMBER);
-            const headSha = process.env.HEAD_SHA;
-            const expectedWorkflows = ["CI", "Tests"];
-            const deadline = Date.now() + 20 * 60 * 1000;
-
-            core.info(`Waiting for ${expectedWorkflows.join(" and ")} on ${headSha}`);
-
-            while (Date.now() < deadline) {
-              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head_sha: headSha,
-                event: "pull_request",
-                per_page: 100
-              });
-
-              const latestRuns = new Map();
-              for (const run of data.workflow_runs) {
-                if (!expectedWorkflows.includes(run.name)) continue;
-                const current = latestRuns.get(run.name);
-                if (!current || new Date(run.created_at) > new Date(current.created_at)) {
-                  latestRuns.set(run.name, run);
-                }
-              }
-
-              if (expectedWorkflows.every(name => latestRuns.has(name))) {
-                const runs = expectedWorkflows.map(name => latestRuns.get(name));
-                if (runs.every(run => run.status === "completed")) {
-                  const failed = runs.filter(run => run.conclusion !== "success");
-                  if (failed.length > 0) {
-                    core.setFailed(
-                      `Not merging: required workflow(s) did not succeed: ${failed
-                        .map(run => `${run.name} (${run.conclusion})`)
-                        .join(", ")}`
-                    );
-                    return;
+            const result = await github.graphql(
+              `mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+                enablePullRequestAutoMerge(input: {
+                  pullRequestId: $pullRequestId,
+                  mergeMethod: $mergeMethod
+                }) {
+                  pullRequest {
+                    number
+                    autoMergeRequest {
+                      mergeMethod
+                    }
                   }
-
-                  // The SHA guard prevents merging if Dependabot updated the
-                  // branch while this job was waiting for CI.
-                  await github.rest.pulls.merge({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: prNumber,
-                    merge_method: "squash",
-                    sha: headSha
-                  });
-
-                  core.info(`Successfully squash-merged Dependabot PR #${prNumber} after CI passed.`);
-                  return;
                 }
+              }`,
+              {
+                pullRequestId: context.payload.pull_request.node_id,
+                mergeMethod: "SQUASH"
               }
+            );
 
-              await new Promise(resolve => setTimeout(resolve, 15000));
-            }
-
-            core.setFailed(
-              "Not merging: timed out waiting for both CI and Tests to complete successfully."
+            core.info(
+              `Enabled squash auto-merge for Dependabot PR #${result.enablePullRequestAutoMerge.pullRequest.number}.`
             );
