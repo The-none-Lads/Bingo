@@ -10,7 +10,7 @@ requests>=2.31.0
 types-requests>=2.33.0.20261030
 # Code quality
 black>=26.10.1
-flake8>=6.0.0
+flake8>=7.5.0
 mypy>=2.4.1
 isort>=9.0.2
 yamllint>=1.38.0
